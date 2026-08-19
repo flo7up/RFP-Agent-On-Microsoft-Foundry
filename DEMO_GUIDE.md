@@ -48,7 +48,7 @@ Use this sentence to connect the four demos:
 | --- | ---: | --- |
 | Opening | 1 minute | Establish the customer opportunity |
 | Demo 1 | 3 minutes | Show a useful model-based assessment |
-| Demo 2 | 8 minutes | Improve the offer with Foundry IQ project memory |
+| Demo 2 | 90 seconds | Create a grounded proposal artifact and open its URL |
 | Demo 3 | 4 minutes | Add approved enterprise tools and hosting boundary |
 | Demo 4 | 3 minutes | Trace and evaluate the agent run |
 | Close | 1 minute | Summarize the enterprise progression |
@@ -72,6 +72,7 @@ Populate `.env` with:
 - `FOUNDRY_PROJECT_ENDPOINT`
 - `AZURE_AI_MODEL_DEPLOYMENT_NAME`
 - `FOUNDRY_IQ_SEARCH_CONNECTION_NAME`
+- `AZURE_STORAGE_ACCOUNT_URL`
 - Optional telemetry settings for Demo 4
 
 Never display `.env` during the presentation.
@@ -172,66 +173,25 @@ Say:
 
 > This is a credible first draft, but a systems integrator has something more valuable than a generic first draft: experience from prior deliveries. The next step turns that experience into governed organizational memory.
 
-## Demo 2: Ground the offer in delivery experience
+## Demo 2: Publish a grounded proposal
 
 **File:** `kickoffdemos/02_patterns.py`
 
-**Question answered:** Can the assessment reuse similar delivery experience and cite it?
+**Question answered:** Can the agent reuse similar delivery experience and deliver a proposal artifact?
 
 ### Run
 
-For a controlled presentation, use pauses without the open-ended audience loop:
-
 ```powershell
-python -B kickoffdemos\02_patterns.py --pause
+python -B kickoffdemos\02_patterns.py
 ```
 
-Press Enter after explaining each step.
+### Say before running
 
-Use `--interactive` only when you intentionally want audience questions after the scripted flow:
+> Demo 1 produced a useful assessment from the opportunity alone. Here, Foundry IQ retrieves three synthetic historical projects, the agent turns that evidence into a cited proposal, and the application publishes it as a timestamped Blob Storage artifact.
 
-```powershell
-python -B kickoffdemos\02_patterns.py --pause --interactive
-```
+### Point out in the output
 
-Type `exit` to end the interactive loop.
-
-### Step 1: Assess the opportunity
-
-Say:
-
-> This first step establishes the control: the same new opportunity is assessed without organizational project memory. It gives us a direct before-and-after comparison.
-
-Point out the line:
-
-```text
-WITHOUT FOUNDRY IQ: model reasoning only
-```
-
-This step intentionally overlaps with Demo 1. Move through it quickly; its purpose here is comparison, not introducing the basic agent again.
-
-### Step 2: Retrieve similar projects
-
-Say:
-
-> Foundry IQ now searches a governed Azure AI Search corpus containing three synthetic historical projects. The retrieval layer returns evidence and native reference IDs before the model prepares the comparison.
-
-Point out:
-
-- Retrieval activity names the knowledge source and match count.
-- Exactly three project titles are displayed.
-- Native references `[0]`, `[1]`, and `[2]` identify the evidence supplied to the agent.
-- Northwind, Fabrikam, and Woodgrove are synthetic historical examples.
-
-Do not describe the three projects as customer references or real deployments.
-
-### Step 3: Build the offer
-
-Say:
-
-> The agent now converts retrieved project experience into a reusable SI offer structure. Historical facts carry citations; new design choices remain recommendations.
-
-Point out the offer sections:
+The terminal prints only one URL. Open it and point out these proposal sections:
 
 - Executive Summary
 - Customer Situation
@@ -244,36 +204,15 @@ Point out the offer sections:
 - Lessons Applied
 - Future Expansion Opportunities
 
-Call attention to citations beside historical architectures, lessons, timelines, or metrics. Explicitly state that historical outcomes are evidence, not guarantees for Contoso.
+Call attention to cited historical claims, labeled recommendations, clinician approval, and the synthetic-content warning. The blob name contains a UTC timestamp and uploads use `overwrite=False`.
 
-### Step 4: Executive recommendation
-
-Say:
-
-> The final step distills the grounded offer for the account team. It preserves the clinician as the accountable decision-maker and proposes a controlled first phase.
-
-End on these two lines:
-
-```text
-Without Foundry IQ: The agent proposes a plausible solution from model knowledge.
-With Foundry IQ: The agent accelerates offer creation using organizational delivery experience.
-```
-
-### Optional follow-up question
-
-If interactive mode is enabled, use this prepared question:
-
-```text
-Which controls and evaluation gates should we require before expanding from one specialty to the full health system?
-```
-
-Point out that the follow-up performs a new retrieval and cites project evidence again.
+For an existing public container, the output is a direct blob URL. For a private container, it is a one-hour read-only SAS URL. Do not expose an active SAS query in a published recording.
 
 ### Transition
 
 Say:
 
-> We now have an evidence-grounded offer. Delivery still requires current enterprise facts, governed actions, and cost context. Those should enter through explicit tools, not through prompt text or model memory.
+> We now have an evidence-grounded proposal delivered as a usable artifact. Delivery still requires current enterprise facts, governed actions, and cost context. Those should enter through explicit tools.
 
 ## Demo 3: Connect approved enterprise tools
 

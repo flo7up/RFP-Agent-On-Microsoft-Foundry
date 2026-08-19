@@ -8,8 +8,8 @@ The included healthcare records and opportunity details are synthetic. The proje
 
 ## What this repository demonstrates
 
-1. **Single-agent assessment** - Creates a concise opportunity brief from a customer scenario.
-2. **Foundry IQ grounding** - Ingests three structured historical projects into Azure AI Search and retrieves similar delivery experience for a grounded offer.
+1. **Single-agent assessment** - Publishes a prompt-agent definition and creates a concise opportunity brief from a customer scenario.
+2. **Foundry IQ proposal generation** - Retrieves similar delivery experience, creates a cited proposal, uploads it to Blob Storage, and returns its URL.
 3. **Enterprise tools and hosting** - Grounds an agent in CRM, architecture, and cost-profile tools and can expose the agent through the Foundry Responses protocol.
 4. **Evaluation and tracing** - Exports Agent Framework traces and records a simple enterprise-coverage score.
 
@@ -23,9 +23,10 @@ flowchart LR
     KS --> KB[Foundry IQ knowledge base]
 
     O[New customer opportunity] --> D1[Demo 1: baseline assessment]
-    O --> D2[Demo 2: grounded assessment]
+    O --> D2[Demo 2: grounded proposal]
     KB --> D2
-    D2 --> A[Cited opportunity assessment and offer]
+    D2 --> B[Timestamped proposal blob]
+    B --> U[Accessible proposal URL]
 
     T[Approved enterprise tools] --> D3[Demo 3: tool-grounded agent]
     D3 --> R[Local run or Responses host]
@@ -37,8 +38,8 @@ flowchart LR
 The Foundry IQ path is deliberately separate from model generation:
 
 - `ingest_foundry_iq.py` validates three sample projects, creates or updates a semantic Search index, uploads the records, and creates the Foundry IQ knowledge source and knowledge base.
-- `02_patterns.py` retrieves similar projects from the knowledge base with extractive data and native reference IDs.
-- The assessment agent receives both the new opportunity and retrieved evidence. Historical claims must use citations such as `[0]`, while unsupported choices are labeled as recommendations or assumptions.
+- `02_patterns.py` retrieves similar projects with native reference IDs, generates a Markdown proposal, and uploads it under a timestamped blob name with overwrite disabled.
+- The assessment agent receives both the new opportunity and retrieved evidence. Historical claims use citations such as `[0]`, while unsupported choices are labeled as recommendations or assumptions. The script prints only the uploaded proposal URL.
 
 ## Repository layout
 
@@ -46,10 +47,11 @@ The Foundry IQ path is deliberately separate from model generation:
 | --- | --- |
 | `kickoffdemos/01_intro.py` | Baseline single-agent opportunity assessment |
 | `kickoffdemos/ingest_foundry_iq.py` | Three-document Azure AI Search and Foundry IQ ingestion |
-| `kickoffdemos/02_patterns.py` | Before/after assessment grounded in past projects |
+| `kickoffdemos/02_patterns.py` | Grounded proposal generation and Blob Storage upload |
 | `kickoffdemos/03_hosted_tools.py` | Enterprise tool calling and optional Responses host |
 | `kickoffdemos/04_observability.py` | Tracing and a custom coverage score |
 | `tests/test_demo_contracts.py` | Offline regression tests for ingestion, authentication, cleanup, and story contracts |
+| `RUN_DEMOS.md` | Detailed setup, execution, validation, and troubleshooting runbook |
 | `DEMO_GUIDE.md` | Presenter runbook for the consistent four-demo story |
 | `.env.example` | Safe configuration template |
 | `requirements.txt` | Base dependencies for local demos |
@@ -61,12 +63,13 @@ The Foundry IQ path is deliberately separate from model generation:
 - Azure CLI
 - A Microsoft Foundry project with an accessible model deployment
 - An Azure AI Search service for the Foundry IQ demo
+- An Azure Storage account for Demo 2 proposal files
 - Either:
   - a Search connection in the Foundry project, or
   - Azure RBAC access to a Search endpoint for the signed-in Azure CLI identity
 - Optional: Application Insights, an OTLP endpoint, or the Foundry Toolkit trace viewer for Demo 4
 
-Live model, Search, and telemetry calls may incur Azure charges.
+Live model, Search, Storage, and telemetry calls may incur Azure charges.
 
 ## Setup
 
@@ -96,6 +99,8 @@ Edit `.env` with your resource names. Never commit `.env` or credentials.
 | `FOUNDRY_IQ_OPPORTUNITY_INDEX_NAME` | Ingestion | Optional index-name override |
 | `FOUNDRY_IQ_OPPORTUNITY_KNOWLEDGE_SOURCE_NAME` | Ingestion and Demo 2 | Optional knowledge-source override |
 | `FOUNDRY_IQ_OPPORTUNITY_KNOWLEDGE_BASE_NAME` | Ingestion and Demo 2 | Optional knowledge-base override |
+| `AZURE_STORAGE_ACCOUNT_URL` | Demo 2 | Blob service URL for proposal uploads |
+| `AZURE_STORAGE_PROPOSAL_CONTAINER_NAME` | Demo 2 | Optional container override; defaults to `opportunity-proposals` |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | Demo 4 | Optional Application Insights export |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Demo 4 | Optional generic OpenTelemetry export |
 
@@ -115,6 +120,12 @@ The default persistent resource names are:
 - Knowledge base: `si-healthcare-opportunity-assessment-kb`
 
 Running ingestion again updates these resources and uploads the same three document IDs, making the operation idempotent.
+
+### Proposal storage
+
+Demo 2 uses `AzureCliCredential` to create the proposal container when needed and upload a Markdown blob. Assign the signed-in identity Azure Storage Blob Data Contributor at the storage-account scope so it can upload and create a user-delegation read SAS.
+
+New containers remain private. For a private container, the printed URL contains a one-hour read-only SAS. If the account and existing container already permit anonymous blob access, the script detects that setting and prints the direct blob URL instead. It never enables public access itself.
 
 ## Run the Foundry IQ scenario
 
@@ -136,16 +147,10 @@ Run the baseline assessment:
 python -B kickoffdemos/01_intro.py
 ```
 
-Run the grounded before/after assessment:
+Create, upload, and get the URL for the grounded proposal:
 
 ```powershell
 python -B kickoffdemos/02_patterns.py
-```
-
-For a presentation with pauses and follow-up questions:
-
-```powershell
-python -B kickoffdemos/02_patterns.py --pause --interactive
 ```
 
 You can pass a different opportunity as the positional argument. Retrieval quality depends on its similarity to the three healthcare projects.
@@ -181,7 +186,7 @@ After installing the base requirements, run the standard-library `unittest` suit
 python -B -m unittest discover -s tests -v
 ```
 
-The suite checks the three-document ingestion contract, key and keyless Search connections, retrieval-client cleanup, untrusted-evidence instructions, disabled response storage, the shared Contoso opportunity, and the Demo 4 coverage criteria.
+The suite checks ingestion, Search authentication, retrieval cleanup, timestamped non-overwriting proposal uploads, public and private URL behavior, untrusted-evidence instructions, disabled response storage, the shared opportunity, and Demo 4 coverage.
 
 ## Operational notes
 
@@ -189,7 +194,7 @@ The suite checks the three-document ingestion contract, key and keyless Search c
 - Retrieved documents are treated as evidence, not executable instructions.
 - The opportunity assessment keeps clinician approval as a mandatory boundary.
 - Stateless agent calls set `store=False` so model responses are not stored by the Responses API.
-- Search and knowledge resources persist after the scripts exit; this repository does not delete Azure resources.
+- Demo 1 prompt-agent versions and the Demo 2 Search, knowledge, container, and proposal blobs persist after the scripts exit; this repository does not delete Azure resources.
 - The custom Demo 4 coverage score checks for expected phrases. It is illustrative, not a production quality or safety evaluation.
 - Review identity, networking, content safety, evaluations, error handling, and lifecycle management before adapting these samples for production.
 
@@ -207,4 +212,5 @@ The suite checks the three-document ingestion contract, key and keyless Search c
 - [Microsoft Agent Framework documentation](https://learn.microsoft.com/agent-framework/)
 - [Microsoft Foundry documentation](https://learn.microsoft.com/azure/ai-foundry/)
 - [Azure AI Search documentation](https://learn.microsoft.com/azure/search/)
+- [Azure Blob Storage documentation](https://learn.microsoft.com/azure/storage/blobs/)
 - [Azure Identity documentation](https://learn.microsoft.com/python/api/overview/azure/identity-readme)

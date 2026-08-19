@@ -1,4 +1,9 @@
-"""Demo 4: export Agent Framework traces and record a custom evaluation score."""
+"""Demo 4: export Agent Framework traces and record a custom evaluation score.
+
+Capability: Sends agent telemetry to Application Insights, OTLP, or Foundry Toolkit and
+records a lightweight enterprise-coverage evaluation on the same trace.
+Shows: How observability and application-specific evaluation expose operational evidence.
+"""
 
 from __future__ import annotations
 

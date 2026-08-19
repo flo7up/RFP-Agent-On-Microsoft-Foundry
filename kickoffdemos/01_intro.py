@@ -1,43 +1,57 @@
-"""Demo 1: turn one customer opportunity into a partner solution assessment."""
+"""Demo 1: turn one customer opportunity into a partner solution assessment.
 
-from __future__ import annotations
+Capability: Publishes a project-managed prompt agent and invokes that exact version through
+FoundryAgent to produce a structured brief with delivery risks and human oversight.
+Shows: A useful model-only baseline before adding organizational data or enterprise tools.
+"""
 
 import argparse
 import asyncio
 import os
+from pathlib import Path
 
-from agent_framework import Agent
-from agent_framework.foundry import FoundryChatClient
-from azure.identity import AzureCliCredential
+from agent_framework.foundry import FoundryAgent
+from azure.ai.projects.aio import AIProjectClient
+from azure.ai.projects.models import PromptAgentDefinition
+from azure.identity.aio import AzureCliCredential
+from agent_framework import tool
 from dotenv import load_dotenv
 
 
 DEFAULT_OPPORTUNITY = (
-    "Contoso Health wants to reduce prior-authorization preparation from two hours "
-    "to fifteen minutes. Staff must use approved clinical records, keep patient data "
-    "inside the tenant, and require a clinician to approve every submission."
+    Path(__file__).resolve().parents[1] / "data" / "default_opportunity.txt"
+).read_text(encoding="utf-8").strip()
+
+agent_name = "partner-solution-assessment-intro"
+agent_instructions = (
+    "You are a Microsoft partner solution architect. Assess the customer opportunity and return "
+    "four short sections with these exact headings: AI Opportunities, Architecture Proposal, "
+    "Delivery Risks, and Executive Summary. Recommend Microsoft Agent Framework and Microsoft "
+    "Foundry when they fit. State assumptions, include human oversight, and stay under 220 words."
 )
 
 
-def create_client(credential: AzureCliCredential) -> FoundryChatClient:
-    endpoint = (
-        os.getenv("FOUNDRY_PROJECT_ENDPOINT")
-        or os.getenv("AZURE_AI_PROJECT_ENDPOINT")
-        or os.getenv("project_endpoint")
+def required_setting(*names: str) -> str:
+    for name in names:
+        if value := os.getenv(name):
+            return value
+    raise RuntimeError(f"Set one of these environment variables: {', '.join(names)}")
+
+
+async def create_agent(project_client: AIProjectClient, model_deployment_name: str) -> FoundryAgent:
+    agent_version = await project_client.agents.create_version(
+        agent_name=agent_name,
+        definition=PromptAgentDefinition(
+            model=model_deployment_name,
+            instructions=agent_instructions,
+        ),
+        description="Assesses customer opportunities for a Microsoft partner.",
     )
-    model = (
-        os.getenv("AZURE_AI_MODEL_DEPLOYMENT_NAME")
-        or os.getenv("FOUNDRY_MODEL")
-        or os.getenv("deployment_name")
-    )
-    if not endpoint or not model:
-        raise RuntimeError(
-            "Set FOUNDRY_PROJECT_ENDPOINT and AZURE_AI_MODEL_DEPLOYMENT_NAME before running the demo."
-        )
-    return FoundryChatClient(
-        project_endpoint=endpoint,
-        model=model,
-        credential=credential,
+    return FoundryAgent(
+        project_client=project_client,
+        agent_name=agent_version.name,
+        agent_version=agent_version.version,
+        default_options={"store": False},
     )
 
 
@@ -46,27 +60,29 @@ async def main() -> None:
     parser.add_argument("opportunity", nargs="?", default=DEFAULT_OPPORTUNITY)
     args = parser.parse_args()
 
-    credential = AzureCliCredential()
-    try:
-        agent = Agent(
-            name="partner-solution-assessment",
-            description="Assesses customer opportunities for a Microsoft partner.",
-            instructions=(
-                "You are a Microsoft partner solution architect. Assess the customer opportunity and return "
-                "four short sections with these exact headings: AI Opportunities, Architecture Proposal, "
-                "Delivery Risks, and Executive Summary. Recommend Microsoft Agent Framework and Microsoft "
-                "Foundry when they fit. State assumptions, include human oversight, and stay under 220 words."
-            ),
-            client=create_client(credential),
-            default_options={"store": False},
-        )
+    project_endpoint = required_setting(
+        "FOUNDRY_PROJECT_ENDPOINT",
+        "AZURE_AI_PROJECT_ENDPOINT",
+        "project_endpoint",
+    )
+    model_deployment_name = required_setting(
+        "AZURE_AI_MODEL_DEPLOYMENT_NAME",
+        "FOUNDRY_MODEL",
+        "deployment_name",
+    )
+
+    async with (
+        AzureCliCredential() as credential,
+        AIProjectClient(endpoint=project_endpoint, credential=credential) as project_client,
+    ):
+        agent = await create_agent(project_client, model_deployment_name)
 
         print("\nDEMO 1 - SINGLE AGENT")
-        print("One Agent Framework agent turns an opportunity into an architecture-ready brief.\n")
+        print(
+            f"Foundry agent {agent_name} turns an opportunity into an architecture-ready brief.\n"
+        )
         response = await agent.run(args.opportunity)
         print(response.text)
-    finally:
-        credential.close()
 
 
 if __name__ == "__main__":

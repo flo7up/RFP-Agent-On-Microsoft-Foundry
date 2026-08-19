@@ -1,21 +1,24 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import contextlib
 import importlib.util
 import io
 import os
 import sys
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 from azure.core.credentials import AzureKeyCredential
 
 
 ROOT = Path(__file__).resolve().parents[1]
 DEMOS = ROOT / "kickoffdemos"
+DEFAULT_OPPORTUNITY_FILE = ROOT / "data" / "default_opportunity.txt"
 
 
 def load_module(name: str, filename: str):
@@ -162,6 +165,79 @@ class FoundryIqContractTests(unittest.TestCase):
         )
 
 
+class ProposalStorageContractTests(unittest.TestCase):
+    def test_demo_prints_only_the_proposal_url(self) -> None:
+        credential = Mock()
+        proposal_url = "https://storage.example.test/proposals/proposal.md"
+        with (
+            patch.object(patterns, "AzureCliCredential", return_value=credential),
+            patch.object(patterns, "create_proposal_url", AsyncMock(return_value=proposal_url)),
+            patch.object(sys, "argv", ["02_patterns.py"]),
+            contextlib.redirect_stdout(io.StringIO()) as output,
+        ):
+            asyncio.run(patterns.main())
+
+        self.assertEqual(output.getvalue(), f"{proposal_url}\n")
+        credential.close.assert_called_once_with()
+
+    def test_private_container_returns_timestamped_read_sas_url(self) -> None:
+        service, container, blob = self._storage_clients(public_access=None)
+        with (
+            patch.object(patterns, "BlobServiceClient", return_value=service),
+            patch.object(patterns, "generate_blob_sas", return_value="sig=read-only") as generate_sas,
+            patch.dict(
+                os.environ,
+                {
+                    "AZURE_STORAGE_ACCOUNT_URL": "https://storage.example.test",
+                    "AZURE_STORAGE_PROPOSAL_CONTAINER_NAME": "proposals",
+                },
+            ),
+        ):
+            url = patterns.upload_proposal(
+                object(),
+                "# Proposal",
+                now=datetime(2026, 8, 19, 12, 34, 56, 789000, tzinfo=timezone.utc),
+            )
+
+        blob_name = "draft-opportunity-proposal-20260819T123456789000Z.md"
+        container.get_blob_client.assert_called_once_with(blob_name)
+        upload_options = blob.upload_blob.call_args.kwargs
+        self.assertFalse(upload_options["overwrite"])
+        self.assertEqual(upload_options["content_settings"].content_type, "text/markdown; charset=utf-8")
+        self.assertEqual(url, "https://storage.example.test/proposals/proposal.md?sig=read-only")
+        self.assertTrue(generate_sas.call_args.kwargs["permission"].read)
+
+    def test_public_container_returns_direct_blob_url(self) -> None:
+        service, _, _ = self._storage_clients(public_access="blob")
+        with (
+            patch.object(patterns, "BlobServiceClient", return_value=service),
+            patch.object(patterns, "generate_blob_sas") as generate_sas,
+            patch.dict(os.environ, {"AZURE_STORAGE_ACCOUNT_URL": "https://storage.example.test"}),
+        ):
+            url = patterns.upload_proposal(
+                object(),
+                "# Proposal",
+                now=datetime(2026, 8, 19, tzinfo=timezone.utc),
+            )
+
+        self.assertEqual(url, "https://storage.example.test/proposals/proposal.md")
+        service.get_user_delegation_key.assert_not_called()
+        generate_sas.assert_not_called()
+
+    @staticmethod
+    def _storage_clients(public_access):
+        service = MagicMock()
+        service.__enter__.return_value = service
+        service.account_name = "storage"
+        container = Mock()
+        container.get_container_properties.return_value = SimpleNamespace(public_access=public_access)
+        blob = Mock(url="https://storage.example.test/proposals/proposal.md")
+        container.get_blob_client.return_value = blob
+        service.get_container_client.return_value = container
+        service.get_user_delegation_key.return_value = object()
+        return service, container, blob
+
+
 class DemoStoryContractTests(unittest.TestCase):
     def test_all_agents_disable_response_storage(self) -> None:
         agent_calls = []
@@ -172,7 +248,7 @@ class DemoStoryContractTests(unittest.TestCase):
                 for node in ast.walk(tree)
                 if isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Name)
-                and node.func.id == "Agent"
+                and node.func.id in {"Agent", "FoundryAgent"}
             )
 
         self.assertEqual(len(agent_calls), 4)
@@ -185,6 +261,9 @@ class DemoStoryContractTests(unittest.TestCase):
             self.assertEqual(ast.literal_eval(keyword.value), {"store": False})
 
     def test_intro_and_foundry_iq_use_the_same_opportunity(self) -> None:
+        expected_opportunity = DEFAULT_OPPORTUNITY_FILE.read_text(encoding="utf-8").strip()
+
+        self.assertEqual(intro.DEFAULT_OPPORTUNITY, expected_opportunity)
         self.assertEqual(intro.DEFAULT_OPPORTUNITY, patterns.DEFAULT_OPPORTUNITY)
         self.assertIn("Contoso Health", intro.DEFAULT_OPPORTUNITY)
         self.assertIn("fifteen minutes", intro.DEFAULT_OPPORTUNITY)
@@ -192,7 +271,6 @@ class DemoStoryContractTests(unittest.TestCase):
 
     def test_configuration_aliases_work_across_all_model_demos(self) -> None:
         factories = (
-            (intro, intro.create_client),
             (patterns, patterns.create_assessment_agent),
             (hosted_tools, hosted_tools.create_agent),
             (observability, observability.create_agent),
@@ -203,6 +281,15 @@ class DemoStoryContractTests(unittest.TestCase):
         }
 
         with patch.dict(os.environ, environment, clear=True):
+            self.assertEqual(
+                intro.required_setting("FOUNDRY_PROJECT_ENDPOINT", "project_endpoint"),
+                environment["project_endpoint"],
+            )
+            self.assertEqual(
+                intro.required_setting("AZURE_AI_MODEL_DEPLOYMENT_NAME", "deployment_name"),
+                environment["deployment_name"],
+            )
+
             for source_module, factory in factories:
                 with (
                     self.subTest(module=source_module.__name__),
@@ -214,6 +301,27 @@ class DemoStoryContractTests(unittest.TestCase):
                 options = client_type.call_args.kwargs
                 self.assertEqual(options["project_endpoint"], environment["project_endpoint"])
                 self.assertEqual(options["model"], environment["deployment_name"])
+
+    def test_intro_publishes_and_binds_a_foundry_prompt_agent(self) -> None:
+        project_client = Mock()
+        project_client.agents.create_version = AsyncMock(
+            return_value=SimpleNamespace(name=intro.agent_name, version="1")
+        )
+
+        with patch.object(intro, "FoundryAgent") as foundry_agent_type:
+            agent = asyncio.run(intro.create_agent(project_client, "model-deployment"))
+
+        self.assertIs(agent, foundry_agent_type.return_value)
+        create_options = project_client.agents.create_version.call_args.kwargs
+        self.assertEqual(create_options["agent_name"], intro.agent_name)
+        self.assertEqual(create_options["definition"].model, "model-deployment")
+        self.assertEqual(create_options["definition"].instructions, intro.agent_instructions)
+        foundry_agent_type.assert_called_once_with(
+            project_client=project_client,
+            agent_name=intro.agent_name,
+            agent_version="1",
+            default_options={"store": False},
+        )
 
     def test_cost_profile_uses_the_approved_crm_volume(self) -> None:
         with contextlib.redirect_stdout(io.StringIO()) as output:

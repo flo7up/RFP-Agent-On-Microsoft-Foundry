@@ -1,4 +1,9 @@
-"""Demo 3: ground an agent with enterprise tools and optionally host it in Foundry."""
+"""Demo 3: ground an agent with enterprise tools and optionally host it in Foundry.
+
+Capability: Uses bounded CRM, architecture-guidance, and cost-profile tools, then runs the
+same agent locally or behind the Foundry Responses hosting boundary.
+Shows: How approved enterprise facts and governed tool calls improve a recommendation.
+"""
 
 from __future__ import annotations
 

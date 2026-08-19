@@ -1,10 +1,14 @@
-"""Demo 02: improve an opportunity assessment with past-project memory from Foundry IQ.
+"""Demo 02: create and publish a proposal grounded in Foundry IQ project memory.
+
+Capability: Retrieves cited evidence from three synthetic historical projects, creates a
+draft Markdown proposal, and uploads it to a timestamped Azure Blob Storage object.
+Shows: How Foundry IQ can ground a reusable proposal artifact and return an accessible URL.
 
 Ingest the three sample projects once:
     python kickoffdemos/ingest_foundry_iq.py
 
-Run the ten-minute demo with the same opportunity as Demo 01:
-    python kickoffdemos/02_patterns.py --pause --interactive
+Run with the same opportunity as Demo 01:
+    python kickoffdemos/02_patterns.py
 
 Run with another opportunity:
     python kickoffdemos/02_patterns.py "<customer opportunity>"
@@ -13,11 +17,13 @@ Required environment variables:
     FOUNDRY_PROJECT_ENDPOINT
     AZURE_AI_MODEL_DEPLOYMENT_NAME or deployment_name
     FOUNDRY_IQ_SEARCH_CONNECTION_NAME (unless a Search endpoint is configured)
+    AZURE_STORAGE_ACCOUNT_URL
 
 Optional environment variables:
     AZURE_SEARCH_ENDPOINT or FOUNDRY_IQ_SEARCH_ENDPOINT
     FOUNDRY_IQ_OPPORTUNITY_KNOWLEDGE_SOURCE_NAME
     FOUNDRY_IQ_OPPORTUNITY_KNOWLEDGE_BASE_NAME
+    AZURE_STORAGE_PROPOSAL_CONTAINER_NAME
 """
 
 from __future__ import annotations
@@ -28,12 +34,15 @@ import json
 import os
 import sys
 from collections.abc import Mapping
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 from agent_framework import Agent
 from agent_framework.foundry import FoundryChatClient
 from azure.ai.projects import AIProjectClient
 from azure.core.credentials import AzureKeyCredential
+from azure.core.exceptions import ResourceExistsError
 from azure.identity import AzureCliCredential
 from azure.search.documents.knowledgebases import KnowledgeBaseRetrievalClient
 from azure.search.documents.knowledgebases.models import (
@@ -42,18 +51,23 @@ from azure.search.documents.knowledgebases.models import (
     KnowledgeRetrievalSemanticIntent,
     SearchIndexKnowledgeSourceParams,
 )
+from azure.storage.blob import (
+    BlobSasPermissions,
+    BlobServiceClient,
+    ContentSettings,
+    generate_blob_sas,
+)
 from dotenv import load_dotenv
 
 
 SEARCH_API_VERSION = "2026-05-01-preview"
 DEFAULT_KNOWLEDGE_SOURCE_NAME = "si-healthcare-opportunity-history-ks"
 DEFAULT_KNOWLEDGE_BASE_NAME = "si-healthcare-opportunity-assessment-kb"
+DEFAULT_PROPOSAL_CONTAINER_NAME = "opportunity-proposals"
 
 DEFAULT_OPPORTUNITY = (
-    "Contoso Health wants to reduce prior-authorization preparation from two hours "
-    "to fifteen minutes. Staff must use approved clinical records, keep patient data "
-    "inside the tenant, and require a clinician to approve every submission."
-)
+    Path(__file__).resolve().parents[1] / "data" / "default_opportunity.txt"
+).read_text(encoding="utf-8").strip()
 
 SECTION_FIELDS = (
     ("executive_summary", "Executive Summary"),
@@ -169,7 +183,7 @@ def retrieve_project_memory(credential: AzureCliCredential, opportunity: str) ->
         result = client.retrieve(
             KnowledgeBaseRetrievalRequest(
                 intents=[KnowledgeRetrievalSemanticIntent(search=query)],
-                include_activity=True,
+                include_activity=False,
                 max_output_size=18_000,
                 output_mode="extractiveData",
                 retrieval_reasoning_effort=KnowledgeRetrievalMinimalReasoningEffort(),
@@ -186,34 +200,13 @@ def retrieve_project_memory(credential: AzureCliCredential, opportunity: str) ->
     finally:
         client.close()
 
-    print("\n  FOUNDRY IQ RETRIEVAL ACTIVITY")
-    print(f"  Query opportunity: {opportunity}")
-    for activity in result.activity or []:
-        item = as_dict(activity)
-        activity_type = first_value(item, "type", default="retrieval")
-        source = first_value(item, "knowledge_source_name", "knowledgeSourceName", default="")
-        count = first_value(item, "count", default="")
-        elapsed = first_value(item, "elapsed_ms", "elapsedMs", default="")
-        details = ", ".join(
-            part
-            for part in (
-                f"source={source}" if source else "",
-                f"matches={count}" if count != "" else "",
-                f"elapsed={elapsed} ms" if elapsed != "" else "",
-            )
-            if part
-        )
-        print(f"    -> {activity_type}{': ' + details if details else ''}")
-
     references = [as_dict(reference) for reference in (result.references or [])]
-    print("\n  PAST PROJECTS RETURNED TO THE AGENT")
     citation_catalog: list[str] = []
     for position, reference in enumerate(references, start=1):
         source_data = first_value(reference, "source_data", "sourceData", default={}) or {}
         reference_id = str(first_value(reference, "id", default=position - 1))
         title = first_value(source_data, "title", default="Untitled project")
         source_path = first_value(source_data, "source_path", "sourcePath", default="")
-        print(f"    [{reference_id}] {title}{f' | {source_path}' if source_path else ''}")
         citation = {
             "reference_id": reference_id,
             "title": title,
@@ -237,132 +230,91 @@ def retrieve_project_memory(credential: AzureCliCredential, opportunity: str) ->
     return f"{grounding_text}\n\nStructured citation catalog:\n" + "\n".join(citation_catalog)
 
 
-async def run_agent(agent: Agent, task: str) -> str:
-    response = await agent.run(task)
-    print(response.text)
-    return response.text
-
-
-def section(number: int, title: str, comparison: str) -> None:
-    print(f"\n{'=' * 78}")
-    print(f"STEP {number} - {title}")
-    print(comparison)
-    print("=" * 78)
-
-
-def pause(enabled: bool) -> None:
-    if enabled:
-        input("\nPress Enter to continue...")
-
-
-async def run_demo(args: argparse.Namespace, credential: AzureCliCredential) -> None:
-    agent = create_assessment_agent(credential)
-    opportunity = args.opportunity
-
-    section(1, "ASSESS THE OPPORTUNITY", "WITHOUT FOUNDRY IQ: model reasoning only")
-    baseline = await run_agent(
-        agent,
-        f"""Assess this opportunity without using historical project knowledge:
-
-{opportunity}
-
-Return Business Challenge, AI Opportunity, Initial Architecture, Delivery Risks, and Assumptions.
-State clearly that no organizational project memory was used.""",
+def upload_proposal(
+    credential: AzureCliCredential,
+    proposal: str,
+    *,
+    now: datetime | None = None,
+) -> str:
+    account_url = required_setting("AZURE_STORAGE_ACCOUNT_URL").rstrip("/")
+    container_name = os.getenv(
+        "AZURE_STORAGE_PROPOSAL_CONTAINER_NAME",
+        DEFAULT_PROPOSAL_CONTAINER_NAME,
     )
-    pause(args.pause)
+    created_at = now or datetime.now(timezone.utc)
+    timestamp = created_at.strftime("%Y%m%dT%H%M%S%fZ")
+    blob_name = f"draft-opportunity-proposal-{timestamp}.md"
 
-    section(2, "RETRIEVE SIMILAR PAST PROJECTS", "WITH FOUNDRY IQ: organizational experience retrieved")
-    grounding = retrieve_project_memory(credential, opportunity)
-    comparison = await run_agent(
-        agent,
-        f"""Compare the new opportunity with every retrieved sample project. For each project explain
-why it is similar and extract the most relevant architecture, Microsoft services, timeline, security,
-governance, success metrics, lessons learned, and future expansion ideas. Cite every project claim.
+    with BlobServiceClient(account_url=account_url, credential=credential) as service_client:
+        container_client = service_client.get_container_client(container_name)
+        try:
+            container_client.create_container()
+        except ResourceExistsError:
+            pass
 
-New opportunity:
-{opportunity}
+        blob_client = container_client.get_blob_client(blob_name)
+        container_properties = container_client.get_container_properties()
+        is_public = container_properties.public_access in {"blob", "container"}
 
-Foundry IQ evidence:
-{grounding}""",
-    )
-    pause(args.pause)
-
-    section(3, "BUILD THE OFFER", "Grounded in proven delivery patterns")
-    offer = await run_agent(
-        agent,
-        f"""Create a concise SI opportunity assessment and offer blueprint for the new opportunity.
-Use these exact headings: Executive Summary, Customer Situation, Recommended Architecture,
-Microsoft Services Used, Implementation Timeline, Security Considerations, Governance Controls,
-Success Metrics, Lessons Applied, and Future Expansion Opportunities. Reuse supported patterns from
-the past projects with citations. Label new choices as recommendations and do not present historical
-sample metrics as guaranteed outcomes.
-
-New opportunity:
-{opportunity}
-
-Past-project comparison:
-{comparison}
-
-Foundry IQ evidence:
-{grounding}""",
-    )
-    pause(args.pause)
-
-    section(4, "EXECUTIVE RECOMMENDATION", "A faster, evidence-grounded offer creation process")
-    executive_recommendation = await run_agent(
-        agent,
-        f"""Write a short executive recommendation for the SI account team. Explain what changed after
-consulting Foundry IQ, which past delivery patterns should be reused, the proposed first phase, the
-human-accountability boundary, and the principal assumptions. Cite historical claims. End with exactly:
-Without Foundry IQ: The agent proposes a plausible solution from model knowledge.
-With Foundry IQ: The agent accelerates offer creation using organizational delivery experience.
-
-Baseline assessment:
-{baseline}
-
-Grounded offer:
-{offer}
-
-Foundry IQ evidence:
-{grounding}""",
-    )
-
-    if args.interactive:
-        print("\nCONVERSATIONAL FOLLOW-UP (type 'exit' to finish)")
-        while True:
-            question = input("\nYou: ").strip()
-            if not question or question.lower() in {"exit", "quit"}:
-                break
-            follow_up_grounding = retrieve_project_memory(credential, f"{opportunity}\n{question}")
-            await run_agent(
-                agent,
-                f"""Answer the account team's follow-up question using the current offer and newly
-retrieved Foundry IQ evidence. Cite historical claims and identify unsupported assumptions.
-
-Question: {question}
-
-Current offer:
-{executive_recommendation}
-
-Foundry IQ evidence:
-{follow_up_grounding}""",
+        sas_token = ""
+        if not is_public:
+            starts_at = created_at - timedelta(minutes=5)
+            expires_at = created_at + timedelta(hours=1)
+            delegation_key = service_client.get_user_delegation_key(
+                key_start_time=starts_at,
+                key_expiry_time=expires_at,
             )
+            sas_token = generate_blob_sas(
+                account_name=service_client.account_name,
+                container_name=container_name,
+                blob_name=blob_name,
+                user_delegation_key=delegation_key,
+                permission=BlobSasPermissions(read=True),
+                start=starts_at,
+                expiry=expires_at,
+            )
+
+        blob_client.upload_blob(
+            proposal.encode("utf-8"),
+            overwrite=False,
+            content_settings=ContentSettings(content_type="text/markdown; charset=utf-8"),
+        )
+        return blob_client.url if is_public else f"{blob_client.url}?{sas_token}"
+
+
+async def create_proposal_url(opportunity: str, credential: AzureCliCredential) -> str:
+    agent = create_assessment_agent(credential)
+    grounding = retrieve_project_memory(credential, opportunity)
+    response = await agent.run(
+        f"""Create a polished draft SI proposal in Markdown for the new opportunity. Use these exact
+headings: Executive Summary, Customer Situation, Recommended Architecture, Microsoft Services Used,
+Implementation Timeline, Security Considerations, Governance Controls, Success Metrics, Lessons
+Applied, and Future Expansion Opportunities. Reuse supported patterns from the synthetic historical
+projects with citations. Label new choices as recommendations, retain clinician approval, and do not
+present historical metrics as guaranteed outcomes. Return only the proposal content.
+
+New opportunity:
+{opportunity}
+
+Foundry IQ evidence:
+{grounding}""",
+    )
+    proposal = (
+        "# Draft Opportunity Proposal\n\n"
+        "> Synthetic demonstration content. Review before use.\n\n"
+        f"{response.text.strip()}\n"
+    )
+    return upload_proposal(credential, proposal)
 
 
 async def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("opportunity", nargs="?", default=DEFAULT_OPPORTUNITY)
-    parser.add_argument("--pause", action="store_true", help="Pause between the four presentation steps.")
-    parser.add_argument(
-        "--interactive",
-        action="store_true",
-        help="Accept conversational questions after the scripted flow.",
-    )
     args = parser.parse_args()
 
     credential = AzureCliCredential()
     try:
-        await run_demo(args, credential)
+        print(await create_proposal_url(args.opportunity, credential))
     finally:
         credential.close()
 
