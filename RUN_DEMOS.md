@@ -2,7 +2,7 @@
 
 This guide explains how to prepare the local environment and run every demo in this repository. It is the operator-focused companion to [DEMO_GUIDE.md](DEMO_GUIDE.md), which contains the presentation narrative and timing.
 
-The demos make live calls to Microsoft Foundry. Demo 2 also uses Azure AI Search, Foundry IQ, and Blob Storage. Demo 4 can export telemetry. The healthcare opportunity and historical projects are synthetic, but Azure model, Search, Storage, and telemetry usage may incur charges.
+The demos make live calls to Microsoft Foundry. Demo 2 also uses Azure AI Search and Foundry IQ, with optional Blob Storage. Demo 4 can export telemetry. The healthcare opportunity and historical projects are synthetic, but Azure model, Search, optional Storage, and telemetry usage may incur charges.
 
 ## Run order
 
@@ -11,7 +11,7 @@ For a complete demonstration, use this order:
 1. Create the Python environment and authenticate to Azure.
 2. Configure `.env`.
 3. Run the offline tests and Foundry IQ dry run.
-4. Ingest the three synthetic historical projects for Demo 2.
+4. Ingest three synthetic opportunities and their three linked proposals for Demo 2.
 5. Run Demos 1 through 4.
 
 The shortest command sequence, after setup and configuration, is:
@@ -189,7 +189,7 @@ You can also inspect every command-line option without making live calls:
 
 ## 6. Ingest Foundry IQ project memory
 
-Demo 2 requires one successful ingestion before it can retrieve historical-project evidence:
+Demo 2 requires one successful ingestion before it can retrieve opportunity and linked-proposal evidence:
 
 ```powershell
 .\.venv\Scripts\python.exe -B kickoffdemos\ingest_foundry_iq.py
@@ -197,16 +197,9 @@ Demo 2 requires one successful ingestion before it can retrieve historical-proje
 
 A successful run reports:
 
-```text
-[1/4] Creating or updating index
-[2/4] Uploading 3 structured project documents
-        Accepted documents: 3
-[3/4] Creating or updating knowledge source
-[4/4] Creating or updating knowledge base
-Foundry IQ ingestion complete.
-```
+The successful run creates or updates both vectorized indexes, accepts three documents in each, and updates both planner-backed knowledge bases.
 
-The operation is idempotent. Rerunning it updates the same index, knowledge source, knowledge base, and three document IDs. The Azure resources persist after the process exits.
+The operation is idempotent. Rerunning it updates the same two indexes, knowledge sources, knowledge bases, and document IDs. The Azure resources persist after the process exits.
 
 ## 7. Run Demo 1: baseline assessment
 
@@ -214,20 +207,14 @@ The operation is idempotent. Rerunning it updates the same index, knowledge sour
 .\.venv\Scripts\python.exe -B kickoffdemos\01_intro.py
 ```
 
-The script publishes a new version of `partner-solution-assessment-intro`, binds it to `FoundryAgent`, and assesses the default Contoso Health opportunity using only the prompt agent and opportunity text. A successful response contains these exact headings:
+The script publishes a new version of `partner-solution-assessment-intro` with an `opportunity_tool` declaration, then binds that tool's local implementation to `FoundryAgent`. The run prompt contains no customer facts, so the agent must call the no-argument tool to read [data/default_opportunity.txt](data/default_opportunity.txt) before assessing it. A successful response contains these exact headings:
 
 - `AI Opportunities`
 - `Architecture Proposal`
 - `Delivery Risks`
 - `Executive Summary`
 
-To assess a different opportunity, pass it as one quoted positional argument:
-
-```powershell
-.\.venv\Scripts\python.exe -B kickoffdemos\01_intro.py "A regional insurer wants to accelerate provider onboarding while retaining compliance approval."
-```
-
-Model wording varies between runs. Validate the headings, assumptions, human oversight, and tenant boundary instead of exact prose.
+To assess a different opportunity, edit [data/default_opportunity.txt](data/default_opportunity.txt), then rerun the script. Model wording varies between runs. Validate the headings, assumptions, human oversight, and tenant boundary instead of exact prose.
 
 ## 8. Run Demo 2: grounded proposal artifact
 
@@ -354,11 +341,11 @@ Do not use `--include-content` with PHI, credentials, customer data, or an unapp
 - [ ] Azure CLI is signed in to the intended tenant and subscription.
 - [ ] `.env` contains the project endpoint and model deployment name.
 - [ ] One Search access mode is configured.
-- [ ] Blob Storage account URL and account-scope Blob role are configured.
+- [ ] Embedding endpoint, deployment, model, and required managed-identity roles are configured.
 - [ ] Offline tests pass.
-- [ ] Foundry IQ dry run validates three projects.
-- [ ] Live ingestion accepts three documents.
-- [ ] Demo 2 prints one URL and the uploaded proposal opens.
+- [ ] Foundry IQ dry run validates three opportunities and three proposals.
+- [ ] Live ingestion accepts three documents in each index.
+- [ ] Demo 2 prints one output path or URL and the proposal opens.
 - [ ] Demo 3 calls CRM, knowledge, and cost tools.
 - [ ] Demo 4 has the intended telemetry destination.
 - [ ] Prompt and completion content capture remains disabled.

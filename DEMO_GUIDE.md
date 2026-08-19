@@ -72,7 +72,10 @@ Populate `.env` with:
 - `FOUNDRY_PROJECT_ENDPOINT`
 - `AZURE_AI_MODEL_DEPLOYMENT_NAME`
 - `FOUNDRY_IQ_SEARCH_CONNECTION_NAME`
-- `AZURE_STORAGE_ACCOUNT_URL`
+- `AZURE_OPENAI_EMBEDDING_ENDPOINT`
+- `AZURE_OPENAI_EMBEDDING_DEPLOYMENT`
+- `AZURE_OPENAI_EMBEDDING_MODEL`
+- Optional `AZURE_STORAGE_ACCOUNT_URL`
 - Optional telemetry settings for Demo 4
 
 Never display `.env` during the presentation.
@@ -88,14 +91,7 @@ python -B kickoffdemos\ingest_foundry_iq.py
 
 Confirm that the live command reports:
 
-```text
-[1/4] Creating or updating index
-[2/4] Uploading 3 structured project documents
-        Accepted documents: 3
-[3/4] Creating or updating knowledge source
-[4/4] Creating or updating knowledge base
-Foundry IQ ingestion complete.
-```
+Confirm that the live command creates or updates both indexes and accepts three opportunity and three proposal documents.
 
 The command is idempotent. It updates the same index, knowledge source, knowledge base, and three document IDs.
 
@@ -145,7 +141,7 @@ python -B kickoffdemos\01_intro.py
 
 ### Say before running
 
-> We begin with the smallest useful Agent Framework application: one agent, one Foundry-hosted model, and a clear role. It receives the customer opportunity and produces an architecture-ready brief.
+> We begin with one prompt agent, one Foundry-hosted model, and one bounded Agent Framework tool. The run prompt contains no customer facts, so the agent calls `opportunity_tool` to read the approved opportunity before producing an architecture-ready brief.
 
 ### Point out in the output
 
@@ -158,6 +154,8 @@ The response should contain these four headings:
 
 Call attention to:
 
+- The `@tool` declaration has no arguments and reads the shared opportunity file.
+- The same tool schema is published with the prompt agent and its callable is bound to `FoundryAgent`.
 - The output is concise and immediately useful to an account team.
 - Human oversight and tenant boundaries appear in the recommendation.
 - Assumptions and risks are visible instead of hidden.
@@ -187,7 +185,7 @@ python -B kickoffdemos\02_patterns.py
 
 ### Say before running
 
-> Demo 1 produced a useful assessment from the opportunity alone. Here, Foundry IQ retrieves three synthetic historical projects, the agent turns that evidence into a cited proposal, and the application publishes it as a timestamped Blob Storage artifact.
+> Demo 1 produced a useful assessment from the opportunity alone. Here, Foundry IQ first matches similar synthetic calls for offer, then retrieves their linked proposals with hybrid agentic search and creates a cited draft.
 
 ### Point out in the output
 

@@ -8,8 +8,8 @@ The included healthcare records and opportunity details are synthetic. The proje
 
 ## What this repository demonstrates
 
-1. **Single-agent assessment** - Publishes a prompt-agent definition and creates a concise opportunity brief from a customer scenario.
-2. **Foundry IQ proposal generation** - Retrieves similar delivery experience, creates a cited proposal, uploads it to Blob Storage, and returns its URL.
+1. **Single-agent assessment** - Publishes a prompt agent that calls an Agent Framework tool to read the opportunity and create a concise brief.
+2. **Foundry IQ proposal generation** - Uses hybrid agentic retrieval to match prior opportunities, retrieves their linked proposals, and writes a cited draft.
 3. **Enterprise tools and hosting** - Grounds an agent in CRM, architecture, and cost-profile tools and can expose the agent through the Foundry Responses protocol.
 4. **Evaluation and tracing** - Exports Agent Framework traces and records a simple enterprise-coverage score.
 
@@ -17,16 +17,19 @@ The included healthcare records and opportunity details are synthetic. The proje
 
 ```mermaid
 flowchart LR
-    H[Three synthetic historical projects] --> I[Ingestion script]
-    I --> S[Azure AI Search index]
-    S --> KS[Foundry IQ knowledge source]
-    KS --> KB[Foundry IQ knowledge base]
+    H[Three synthetic calls for offer] --> I[Ingestion script]
+    P[Three linked proposals] --> I
+    I --> OS[Opportunity Search index]
+    I --> PS[Proposal Search index]
+    OS --> OKB[Opportunity knowledge base]
+    PS --> PKB[Proposal knowledge base]
 
-    O[New customer opportunity] --> D1[Demo 1: baseline assessment]
+    O[New customer opportunity] --> OT[Opportunity tool]
+    OT --> D1[Demo 1: baseline assessment]
     O --> D2[Demo 2: grounded proposal]
-    KB --> D2
-    D2 --> B[Timestamped proposal blob]
-    B --> U[Accessible proposal URL]
+    OKB --> D2
+    PKB --> D2
+    D2 --> B[Timestamped Markdown proposal]
 
     T[Approved enterprise tools] --> D3[Demo 3: tool-grounded agent]
     D3 --> R[Local run or Responses host]
@@ -37,17 +40,18 @@ flowchart LR
 
 The Foundry IQ path is deliberately separate from model generation:
 
-- `ingest_foundry_iq.py` validates three sample projects, creates or updates a semantic Search index, uploads the records, and creates the Foundry IQ knowledge source and knowledge base.
-- `02_patterns.py` retrieves similar projects with native reference IDs, generates a Markdown proposal, and uploads it under a timestamped blob name with overwrite disabled.
+- `ingest_foundry_iq.py` creates separate opportunity and proposal indexes with semantic ranking, vectors, Azure OpenAI query-time vectorizers, knowledge sources, and planner-backed knowledge bases.
+- `02_patterns.py` uses low-reasoning agentic retrieval to find similar opportunities, filters proposal retrieval by the matched opportunity IDs, and generates a cited Markdown proposal.
 - The assessment agent receives both the new opportunity and retrieved evidence. Historical claims use citations such as `[0]`, while unsupported choices are labeled as recommendations or assumptions. The script prints only the uploaded proposal URL.
 
 ## Repository layout
 
 | Path | Purpose |
 | --- | --- |
-| `kickoffdemos/01_intro.py` | Baseline single-agent opportunity assessment |
+| `kickoffdemos/01_intro.py` | Tool-sourced baseline opportunity assessment |
 | `kickoffdemos/ingest_foundry_iq.py` | Three-document Azure AI Search and Foundry IQ ingestion |
-| `kickoffdemos/02_patterns.py` | Grounded proposal generation and Blob Storage upload |
+| `kickoffdemos/02_patterns.py` | Two-stage hybrid agentic retrieval and grounded proposal generation |
+| `kickoffdemos/03_patterns.py` | Foundry Hosted Agent adapter for the complete Demo 02 workflow |
 | `kickoffdemos/03_hosted_tools.py` | Enterprise tool calling and optional Responses host |
 | `kickoffdemos/04_observability.py` | Tracing and a custom coverage score |
 | `tests/test_demo_contracts.py` | Offline regression tests for ingestion, authentication, cleanup, and story contracts |
@@ -63,7 +67,7 @@ The Foundry IQ path is deliberately separate from model generation:
 - Azure CLI
 - A Microsoft Foundry project with an accessible model deployment
 - An Azure AI Search service for the Foundry IQ demo
-- An Azure Storage account for Demo 2 proposal files
+- Optional Azure Storage for Demo 2; otherwise proposals are written under `outputs/`
 - Either:
   - a Search connection in the Foundry project, or
   - Azure RBAC access to a Search endpoint for the signed-in Azure CLI identity
@@ -99,7 +103,14 @@ Edit `.env` with your resource names. Never commit `.env` or credentials.
 | `FOUNDRY_IQ_OPPORTUNITY_INDEX_NAME` | Ingestion | Optional index-name override |
 | `FOUNDRY_IQ_OPPORTUNITY_KNOWLEDGE_SOURCE_NAME` | Ingestion and Demo 2 | Optional knowledge-source override |
 | `FOUNDRY_IQ_OPPORTUNITY_KNOWLEDGE_BASE_NAME` | Ingestion and Demo 2 | Optional knowledge-base override |
-| `AZURE_STORAGE_ACCOUNT_URL` | Demo 2 | Blob service URL for proposal uploads |
+| `FOUNDRY_IQ_PROPOSAL_INDEX_NAME` | Ingestion | Optional proposal index-name override |
+| `FOUNDRY_IQ_PROPOSAL_KNOWLEDGE_SOURCE_NAME` | Ingestion and Demo 2 | Optional proposal knowledge-source override |
+| `FOUNDRY_IQ_PROPOSAL_KNOWLEDGE_BASE_NAME` | Ingestion and Demo 2 | Optional proposal knowledge-base override |
+| `AZURE_OPENAI_EMBEDDING_ENDPOINT` | Ingestion | Azure OpenAI resource root used for document and query vectorization |
+| `AZURE_OPENAI_EMBEDDING_DEPLOYMENT` | Ingestion | Embedding deployment name |
+| `AZURE_OPENAI_EMBEDDING_MODEL` | Ingestion | Embedding model name; defaults to the deployment name |
+| `FOUNDRY_IQ_PLANNER_MODEL_NAME` | Ingestion | Optional model-name override for agentic query planning |
+| `AZURE_STORAGE_ACCOUNT_URL` | Demo 2 | Optional Blob service URL; absent or blocked storage falls back to `outputs/` |
 | `AZURE_STORAGE_PROPOSAL_CONTAINER_NAME` | Demo 2 | Optional container override; defaults to `opportunity-proposals` |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | Demo 4 | Optional Application Insights export |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Demo 4 | Optional generic OpenTelemetry export |
@@ -115,11 +126,10 @@ The ingestion and retrieval scripts support two modes:
 
 The default persistent resource names are:
 
-- Index: `si-healthcare-opportunity-history`
-- Knowledge source: `si-healthcare-opportunity-history-ks`
-- Knowledge base: `si-healthcare-opportunity-assessment-kb`
+- Opportunity index/base: `si-healthcare-opportunity-history` / `si-healthcare-opportunity-assessment-kb`
+- Proposal index/base: `si-healthcare-opportunity-proposals` / `si-healthcare-opportunity-proposals-kb`
 
-Running ingestion again updates these resources and uploads the same three document IDs, making the operation idempotent.
+Running ingestion again updates both vectorized indexes and uploads the same three IDs per index, making the operation idempotent. The Search service managed identity needs `Cognitive Services OpenAI User` on the embedding resource and `Cognitive Services User` on the Foundry planner resource.
 
 ### Proposal storage
 
@@ -152,6 +162,30 @@ Create, upload, and get the URL for the grounded proposal:
 ```powershell
 python -B kickoffdemos/02_patterns.py
 ```
+
+### Prepare and deploy the hosted workflow
+
+The hosted service is configured in `azure.yaml` as `opportunity-proposal-agent` using direct code deployment and the Responses protocol. It returns proposal Markdown directly instead of a container-local output path.
+
+Run locally and invoke once:
+
+```powershell
+$env:AZURE_DEV_USER_AGENT = "microsoft_foundry_skill"
+azd ai agent run opportunity-proposal-agent --no-client
+# In a second terminal:
+azd ai agent invoke opportunity-proposal-agent --local "<customer opportunity>"
+```
+
+Deploy when the local smoke test succeeds:
+
+```powershell
+$env:AZURE_DEV_USER_AGENT = "microsoft_foundry_skill"
+azd deploy opportunity-proposal-agent --no-prompt
+azd ai agent show --output json
+azd ai agent invoke opportunity-proposal-agent "<customer opportunity>"
+```
+
+Each deployment creates an immutable hosted-agent version. The deployed agent identity must be able to read the Foundry project connection and the two Azure AI Search knowledge bases.
 
 You can pass a different opportunity as the positional argument. Retrieval quality depends on its similarity to the three healthcare projects.
 

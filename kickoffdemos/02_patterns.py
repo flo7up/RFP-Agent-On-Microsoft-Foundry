@@ -1,8 +1,8 @@
-"""Demo 02: create and publish a proposal grounded in Foundry IQ project memory.
+"""Demo 02: create a proposal grounded in Foundry IQ project memory.
 
-Capability: Retrieves cited evidence from three synthetic historical projects, creates a
-draft Markdown proposal, and uploads it to a timestamped Azure Blob Storage object.
-Shows: How Foundry IQ can ground a reusable proposal artifact and return an accessible URL.
+Capability: Uses hybrid agentic retrieval to match synthetic historical opportunities,
+retrieves their linked proposals, and creates a cited Markdown proposal in outputs/.
+Shows: How Foundry IQ can ground a reusable proposal artifact through a two-stage flow.
 
 Ingest the three sample projects once:
     python kickoffdemos/ingest_foundry_iq.py
@@ -17,12 +17,14 @@ Required environment variables:
     FOUNDRY_PROJECT_ENDPOINT
     AZURE_AI_MODEL_DEPLOYMENT_NAME or deployment_name
     FOUNDRY_IQ_SEARCH_CONNECTION_NAME (unless a Search endpoint is configured)
-    AZURE_STORAGE_ACCOUNT_URL
 
 Optional environment variables:
     AZURE_SEARCH_ENDPOINT or FOUNDRY_IQ_SEARCH_ENDPOINT
     FOUNDRY_IQ_OPPORTUNITY_KNOWLEDGE_SOURCE_NAME
     FOUNDRY_IQ_OPPORTUNITY_KNOWLEDGE_BASE_NAME
+    FOUNDRY_IQ_PROPOSAL_KNOWLEDGE_SOURCE_NAME
+    FOUNDRY_IQ_PROPOSAL_KNOWLEDGE_BASE_NAME
+    AZURE_STORAGE_ACCOUNT_URL
     AZURE_STORAGE_PROPOSAL_CONTAINER_NAME
 """
 
@@ -32,6 +34,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
@@ -41,14 +44,20 @@ from typing import Any
 from agent_framework import Agent
 from agent_framework.foundry import FoundryChatClient
 from azure.ai.projects import AIProjectClient
+
+try:
+    from agent_framework.devui import serve
+except ModuleNotFoundError:  # pragma: no cover
+    serve = None
 from azure.core.credentials import AzureKeyCredential
 from azure.core.exceptions import ResourceExistsError
 from azure.identity import AzureCliCredential
 from azure.search.documents.knowledgebases import KnowledgeBaseRetrievalClient
 from azure.search.documents.knowledgebases.models import (
+    KnowledgeBaseMessage,
+    KnowledgeBaseMessageTextContent,
     KnowledgeBaseRetrievalRequest,
-    KnowledgeRetrievalMinimalReasoningEffort,
-    KnowledgeRetrievalSemanticIntent,
+    KnowledgeRetrievalLowReasoningEffort,
     SearchIndexKnowledgeSourceParams,
 )
 from azure.storage.blob import (
@@ -61,8 +70,10 @@ from dotenv import load_dotenv
 
 
 SEARCH_API_VERSION = "2026-05-01-preview"
-DEFAULT_KNOWLEDGE_SOURCE_NAME = "si-healthcare-opportunity-history-ks"
-DEFAULT_KNOWLEDGE_BASE_NAME = "si-healthcare-opportunity-assessment-kb"
+DEFAULT_OPPORTUNITY_KNOWLEDGE_SOURCE_NAME = "si-healthcare-opportunity-history-ks"
+DEFAULT_OPPORTUNITY_KNOWLEDGE_BASE_NAME = "si-healthcare-opportunity-assessment-kb"
+DEFAULT_PROPOSAL_KNOWLEDGE_SOURCE_NAME = "si-healthcare-opportunity-proposals-ks"
+DEFAULT_PROPOSAL_KNOWLEDGE_BASE_NAME = "si-healthcare-opportunity-proposals-kb"
 DEFAULT_PROPOSAL_CONTAINER_NAME = "opportunity-proposals"
 
 DEFAULT_OPPORTUNITY = (
@@ -102,7 +113,10 @@ def search_access(credential: AzureCliCredential) -> tuple[str, Any]:
     )
     try:
         connection = project_client.connections.get(
-            name=required_setting("FOUNDRY_IQ_SEARCH_CONNECTION_NAME"),
+            name=required_setting(
+                "FOUNDRY_IQ_SEARCH_CONNECTION_NAME",
+                "AZURE_AI_SEARCH_CONNECTION_NAME",
+            ),
             include_credentials=True,
         )
     finally:
@@ -119,11 +133,24 @@ def resource_names() -> tuple[str, str]:
     return (
         os.getenv(
             "FOUNDRY_IQ_OPPORTUNITY_KNOWLEDGE_SOURCE_NAME",
-            DEFAULT_KNOWLEDGE_SOURCE_NAME,
+            DEFAULT_OPPORTUNITY_KNOWLEDGE_SOURCE_NAME,
         ),
         os.getenv(
             "FOUNDRY_IQ_OPPORTUNITY_KNOWLEDGE_BASE_NAME",
-            DEFAULT_KNOWLEDGE_BASE_NAME,
+            DEFAULT_OPPORTUNITY_KNOWLEDGE_BASE_NAME,
+        ),
+    )
+
+
+def proposal_resource_names() -> tuple[str, str]:
+    return (
+        os.getenv(
+            "FOUNDRY_IQ_PROPOSAL_KNOWLEDGE_SOURCE_NAME",
+            DEFAULT_PROPOSAL_KNOWLEDGE_SOURCE_NAME,
+        ),
+        os.getenv(
+            "FOUNDRY_IQ_PROPOSAL_KNOWLEDGE_BASE_NAME",
+            DEFAULT_PROPOSAL_KNOWLEDGE_BASE_NAME,
         ),
     )
 
@@ -163,44 +190,23 @@ def first_value(data: Mapping[str, Any], *names: str, default: Any = None) -> An
     return default
 
 
-def retrieve_project_memory(credential: AzureCliCredential, opportunity: str) -> str:
-    knowledge_source_name, knowledge_base_name = resource_names()
-    endpoint, search_credential = search_access(credential)
-    client = KnowledgeBaseRetrievalClient(
-        endpoint=endpoint,
-        knowledge_base_name=knowledge_base_name,
-        credential=search_credential,
-        api_version=SEARCH_API_VERSION,
-    )
-    requested_sections = ", ".join(heading for _, heading in SECTION_FIELDS)
-    query = (
-        "Find the three past healthcare AI projects most similar to this opportunity. Compare the "
-        "workflow, data sources, human approval boundary, security and governance requirements, "
-        "implementation approach, and measurable outcomes. Return evidence for these sections: "
-        f"{requested_sections}. New opportunity: {opportunity}"
-    )
-    try:
-        result = client.retrieve(
-            KnowledgeBaseRetrievalRequest(
-                intents=[KnowledgeRetrievalSemanticIntent(search=query)],
-                include_activity=False,
-                max_output_size=18_000,
-                output_mode="extractiveData",
-                retrieval_reasoning_effort=KnowledgeRetrievalMinimalReasoningEffort(),
-                knowledge_source_params=[
-                    SearchIndexKnowledgeSourceParams(
-                        knowledge_source_name=knowledge_source_name,
-                        include_references=True,
-                        include_reference_source_data=True,
-                        always_query_source=True,
-                    )
-                ],
-            )
-        )
-    finally:
-        client.close()
-
+def _retrieval_result_payload(
+    result: Any,
+    *,
+    default_message: str,
+) -> tuple[str, list[dict[str, Any]]]:
     references = [as_dict(reference) for reference in (result.references or [])]
+    response_items = result.response or []
+    if not response_items or not response_items[0].content or not references:
+        raise RuntimeError(default_message)
+
+    grounding_text = response_items[0].content[0].text
+    if not grounding_text:
+        raise RuntimeError("Foundry IQ returned empty grounding content.")
+    return grounding_text, references
+
+
+def _citation_catalog(references: list[dict[str, Any]]) -> list[str]:
     citation_catalog: list[str] = []
     for position, reference in enumerate(references, start=1):
         source_data = first_value(reference, "source_data", "sourceData", default={}) or {}
@@ -209,6 +215,8 @@ def retrieve_project_memory(credential: AzureCliCredential, opportunity: str) ->
         source_path = first_value(source_data, "source_path", "sourcePath", default="")
         citation = {
             "reference_id": reference_id,
+            "document_id": first_value(source_data, "id", default=""),
+            "opportunity_id": first_value(source_data, "opportunity_id", default=""),
             "title": title,
             "customer": first_value(source_data, "customer", default=""),
             "industry": first_value(source_data, "industry", default=""),
@@ -218,16 +226,224 @@ def retrieve_project_memory(credential: AzureCliCredential, opportunity: str) ->
             citation[field] = first_value(source_data, field, default="")
         citation["content"] = first_value(source_data, "content", default="")
         citation_catalog.append(json.dumps(citation, ensure_ascii=True))
+    return citation_catalog
 
-    response_items = result.response or []
-    if not response_items or not response_items[0].content or not references:
-        raise RuntimeError(
-            "Foundry IQ returned no project evidence. Run kickoffdemos/ingest_foundry_iq.py first."
+
+def _remap_references(
+    grounding_text: str,
+    references: list[dict[str, Any]],
+    *,
+    first_reference_id: int,
+) -> tuple[str, list[dict[str, Any]]]:
+    reference_map: dict[str, str] = {}
+    remapped_references = []
+    for offset, reference in enumerate(references):
+        old_id = str(first_value(reference, "id", default=offset))
+        new_id = str(first_reference_id + offset)
+        reference_map[old_id] = new_id
+        remapped_reference = dict(reference)
+        remapped_reference["id"] = new_id
+        remapped_references.append(remapped_reference)
+
+    if reference_map:
+        citation_pattern = re.compile(r"\[(" + "|".join(map(re.escape, reference_map)) + r")\]")
+        grounding_text = citation_pattern.sub(
+            lambda match: f"[{reference_map[match.group(1)]}]",
+            grounding_text,
         )
-    grounding_text = response_items[0].content[0].text
-    if not grounding_text:
-        raise RuntimeError("Foundry IQ returned empty grounding content.")
-    return f"{grounding_text}\n\nStructured citation catalog:\n" + "\n".join(citation_catalog)
+    return grounding_text, remapped_references
+
+
+def _opportunity_filter(references: list[dict[str, Any]]) -> str:
+    opportunity_ids = []
+    for reference in references:
+        source_data = first_value(reference, "source_data", "sourceData", default={}) or {}
+        opportunity_id = str(first_value(source_data, "id", default="")).strip()
+        if opportunity_id and opportunity_id not in opportunity_ids:
+            opportunity_ids.append(opportunity_id)
+    if not opportunity_ids:
+        raise RuntimeError("Foundry IQ opportunity references did not include document IDs.")
+
+    return " or ".join(
+        f"opportunity_id eq '{opportunity_id.replace(chr(39), chr(39) * 2)}'"
+        for opportunity_id in opportunity_ids
+    )
+
+
+def retrieve_project_memory(credential: AzureCliCredential, opportunity: str) -> str:
+    opportunity_source_name, opportunity_base_name = resource_names()
+    proposal_source_name, proposal_base_name = proposal_resource_names()
+    endpoint, search_credential = search_access(credential)
+    requested_sections = ", ".join(heading for _, heading in SECTION_FIELDS)
+    opportunity_query = (
+        "Find the three past healthcare AI projects most similar to this opportunity. Compare the "
+        "workflow, data sources, human approval boundary, security and governance requirements, "
+        "implementation approach, and measurable outcomes. Return evidence for these sections: "
+        f"{requested_sections}. New opportunity: {opportunity}"
+    )
+    proposal_query = (
+        "From the retrieved opportunities, identify the historically most relevant proposal or solution "
+        "documents that match this opportunity and include architecture, implementation, governance, "
+        "and success patterns. Focus on solution recommendations and proposal evidence. New opportunity: "
+        f"{opportunity}"
+    )
+
+    opportunity_client = KnowledgeBaseRetrievalClient(
+        endpoint=endpoint,
+        knowledge_base_name=opportunity_base_name,
+        credential=search_credential,
+        api_version=SEARCH_API_VERSION,
+    )
+    try:
+        opportunity_result = opportunity_client.retrieve(
+            KnowledgeBaseRetrievalRequest(
+                messages=[
+                    KnowledgeBaseMessage(
+                        role="user",
+                        content=[KnowledgeBaseMessageTextContent(text=opportunity_query)],
+                    )
+                ],
+                include_activity=True,
+                max_output_size=18_000,
+                output_mode="extractiveData",
+                retrieval_reasoning_effort=KnowledgeRetrievalLowReasoningEffort(),
+                knowledge_source_params=[
+                    SearchIndexKnowledgeSourceParams(
+                        knowledge_source_name=opportunity_source_name,
+                        include_references=True,
+                        include_reference_source_data=True,
+                        always_query_source=True,
+                    )
+                ],
+            )
+        )
+    finally:
+        opportunity_client.close()
+
+    opportunity_text, opportunity_references = _retrieval_result_payload(
+        opportunity_result,
+        default_message="Foundry IQ returned no opportunity evidence. Run kickoffdemos/ingest_foundry_iq.py first.",
+    )
+    opportunity_text, opportunity_references = _remap_references(
+        opportunity_text,
+        opportunity_references,
+        first_reference_id=0,
+    )
+    proposal_filter = _opportunity_filter(opportunity_references)
+
+    proposal_client = KnowledgeBaseRetrievalClient(
+        endpoint=endpoint,
+        knowledge_base_name=proposal_base_name,
+        credential=search_credential,
+        api_version=SEARCH_API_VERSION,
+    )
+    try:
+        proposal_result = proposal_client.retrieve(
+            KnowledgeBaseRetrievalRequest(
+                messages=[
+                    KnowledgeBaseMessage(
+                        role="user",
+                        content=[KnowledgeBaseMessageTextContent(text=proposal_query)],
+                    )
+                ],
+                include_activity=True,
+                max_output_size=18_000,
+                output_mode="extractiveData",
+                retrieval_reasoning_effort=KnowledgeRetrievalLowReasoningEffort(),
+                knowledge_source_params=[
+                    SearchIndexKnowledgeSourceParams(
+                        knowledge_source_name=proposal_source_name,
+                        include_references=True,
+                        include_reference_source_data=True,
+                        always_query_source=True,
+                        filter_add_on=proposal_filter,
+                    )
+                ],
+            )
+        )
+    finally:
+        proposal_client.close()
+
+    proposal_text, proposal_references = _retrieval_result_payload(
+        proposal_result,
+        default_message="Foundry IQ returned no proposal evidence. Run kickoffdemos/ingest_foundry_iq.py first.",
+    )
+    proposal_text, proposal_references = _remap_references(
+        proposal_text,
+        proposal_references,
+        first_reference_id=len(opportunity_references),
+    )
+
+    citation_catalog = _citation_catalog(opportunity_references + proposal_references)
+    return (
+        "Relevant opportunity context:\n"
+        f"{opportunity_text}\n\n"
+        "Relevant proposal evidence:\n"
+        f"{proposal_text}\n\n"
+        "Structured citation catalog:\n"
+        + "\n".join(citation_catalog)
+    )
+
+
+def extract_source_catalog(grounding: str) -> list[dict[str, str]]:
+    marker = "\nStructured citation catalog:\n"
+    if marker not in grounding:
+        return []
+
+    catalog = []
+    for line in grounding.split(marker, 1)[1].splitlines():
+        if not line.strip():
+            continue
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(item, dict):
+            catalog.append({str(key): str(value) for key, value in item.items()})
+    return catalog
+
+
+def append_sources_section(proposal: str, grounding: str) -> str:
+    catalog = extract_source_catalog(grounding)
+    if not catalog:
+        return proposal
+
+    cited_ids = []
+    for match in re.finditer(r"\[(\d+)\]", proposal):
+        cited_ids.append(match.group(1))
+    seen: set[str] = set()
+    ordered_ids: list[str] = []
+    for source_id in cited_ids:
+        if source_id not in seen:
+            seen.add(source_id)
+            ordered_ids.append(source_id)
+
+    if not ordered_ids:
+        return proposal
+
+    source_map = {str(entry.get("reference_id", "")): entry for entry in catalog if entry.get("reference_id")}
+    lines = [proposal.rstrip(), "", "## Sources", ""]
+    for source_id in ordered_ids:
+        item = source_map.get(source_id)
+        if not item:
+            lines.append(f"- [{source_id}] Unavailable source")
+            continue
+
+        title = item.get("title", "Untitled source")
+        customer = item.get("customer")
+        industry = item.get("industry")
+        source_path = item.get("source_path")
+        meta = ", ".join(part for part in [customer, industry] if part)
+        if source_path and meta:
+            lines.append(f"- [{source_id}] {title} — {meta} ({source_path})")
+        elif meta:
+            lines.append(f"- [{source_id}] {title} — {meta}")
+        elif source_path:
+            lines.append(f"- [{source_id}] {title} ({source_path})")
+        else:
+            lines.append(f"- [{source_id}] {title}")
+
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def upload_proposal(
@@ -236,55 +452,65 @@ def upload_proposal(
     *,
     now: datetime | None = None,
 ) -> str:
-    account_url = required_setting("AZURE_STORAGE_ACCOUNT_URL").rstrip("/")
-    container_name = os.getenv(
-        "AZURE_STORAGE_PROPOSAL_CONTAINER_NAME",
-        DEFAULT_PROPOSAL_CONTAINER_NAME,
-    )
     created_at = now or datetime.now(timezone.utc)
     timestamp = created_at.strftime("%Y%m%dT%H%M%S%fZ")
-    blob_name = f"draft-opportunity-proposal-{timestamp}.md"
+    file_name = f"draft-opportunity-proposal-{timestamp}.md"
 
-    with BlobServiceClient(account_url=account_url, credential=credential) as service_client:
-        container_client = service_client.get_container_client(container_name)
-        try:
-            container_client.create_container()
-        except ResourceExistsError:
-            pass
-
-        blob_client = container_client.get_blob_client(blob_name)
-        container_properties = container_client.get_container_properties()
-        is_public = container_properties.public_access in {"blob", "container"}
-
-        sas_token = ""
-        if not is_public:
-            starts_at = created_at - timedelta(minutes=5)
-            expires_at = created_at + timedelta(hours=1)
-            delegation_key = service_client.get_user_delegation_key(
-                key_start_time=starts_at,
-                key_expiry_time=expires_at,
-            )
-            sas_token = generate_blob_sas(
-                account_name=service_client.account_name,
-                container_name=container_name,
-                blob_name=blob_name,
-                user_delegation_key=delegation_key,
-                permission=BlobSasPermissions(read=True),
-                start=starts_at,
-                expiry=expires_at,
-            )
-
-        blob_client.upload_blob(
-            proposal.encode("utf-8"),
-            overwrite=False,
-            content_settings=ContentSettings(content_type="text/markdown; charset=utf-8"),
+    try:
+        account_url = required_setting("AZURE_STORAGE_ACCOUNT_URL").rstrip("/")
+        container_name = os.getenv(
+            "AZURE_STORAGE_PROPOSAL_CONTAINER_NAME",
+            DEFAULT_PROPOSAL_CONTAINER_NAME,
         )
-        return blob_client.url if is_public else f"{blob_client.url}?{sas_token}"
+        blob_name = file_name
+
+        with BlobServiceClient(account_url=account_url, credential=credential) as service_client:
+            container_client = service_client.get_container_client(container_name)
+            try:
+                container_client.create_container()
+            except ResourceExistsError:
+                pass
+
+            blob_client = container_client.get_blob_client(blob_name)
+            container_properties = container_client.get_container_properties()
+            is_public = container_properties.public_access in {"blob", "container"}
+
+            sas_token = ""
+            if not is_public:
+                starts_at = created_at - timedelta(minutes=5)
+                expires_at = created_at + timedelta(hours=1)
+                delegation_key = service_client.get_user_delegation_key(
+                    key_start_time=starts_at,
+                    key_expiry_time=expires_at,
+                )
+                sas_token = generate_blob_sas(
+                    account_name=service_client.account_name,
+                    container_name=container_name,
+                    blob_name=blob_name,
+                    user_delegation_key=delegation_key,
+                    permission=BlobSasPermissions(read=True),
+                    start=starts_at,
+                    expiry=expires_at,
+                )
+
+            blob_client.upload_blob(
+                proposal.encode("utf-8"),
+                overwrite=False,
+                content_settings=ContentSettings(content_type="text/markdown; charset=utf-8"),
+            )
+            return blob_client.url if is_public else f"{blob_client.url}?{sas_token}"
+    except Exception:
+        repo_root = Path(__file__).resolve().parents[1]
+        output_dir = repo_root / "outputs"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / file_name
+        output_path.write_text(proposal, encoding="utf-8")
+        return output_path.relative_to(repo_root).as_posix()
 
 
-async def create_proposal_url(opportunity: str, credential: AzureCliCredential) -> str:
+async def create_proposal(opportunity: str, credential: AzureCliCredential) -> str:
     agent = create_assessment_agent(credential)
-    grounding = retrieve_project_memory(credential, opportunity)
+    grounding = await asyncio.to_thread(retrieve_project_memory, credential, opportunity)
     response = await agent.run(
         f"""Create a polished draft SI proposal in Markdown for the new opportunity. Use these exact
 headings: Executive Summary, Customer Situation, Recommended Architecture, Microsoft Services Used,
@@ -304,13 +530,35 @@ Foundry IQ evidence:
         "> Synthetic demonstration content. Review before use.\n\n"
         f"{response.text.strip()}\n"
     )
+    proposal = append_sources_section(proposal, grounding)
+    return proposal
+
+
+async def create_proposal_url(opportunity: str, credential: AzureCliCredential) -> str:
+    proposal = await create_proposal(opportunity, credential)
     return upload_proposal(credential, proposal)
+
+
+async def launch_devui() -> None:
+    if serve is None:
+        raise RuntimeError("Install agent-framework-devui to launch the DevUI browser experience.")
+
+    credential = AzureCliCredential()
+    try:
+        serve(entities=[create_assessment_agent(credential)], auto_open=True)
+    finally:
+        credential.close()
 
 
 async def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("opportunity", nargs="?", default=DEFAULT_OPPORTUNITY)
+    parser.add_argument("--devui", action="store_true", help="Launch the Agent Framework DevUI for the assessment agent.")
     args = parser.parse_args()
+
+    if args.devui:
+        await launch_devui()
+        return
 
     credential = AzureCliCredential()
     try:

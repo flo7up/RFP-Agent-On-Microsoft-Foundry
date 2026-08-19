@@ -1,1 +1,2 @@
-Contoso Health wants to reduce prior-authorization preparation from two hours to fifteen minutes. Staff must use approved clinical records, keep patient data inside the tenant, and require a clinician to approve every submission.
+Contoso Health wants to reduce prior-authorization preparation from two hours to fifteen minutes. 
+Staff must use approved clinical records, keep patient data inside the tenant, and require a clinician to approve every submission.

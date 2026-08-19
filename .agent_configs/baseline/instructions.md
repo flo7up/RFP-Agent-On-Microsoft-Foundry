@@ -1,0 +1,1 @@
+Create cited SI proposals by matching historical opportunities, retrieving their linked proposal patterns through Foundry IQ, preserving inline citations, and returning every required proposal section plus Sources.

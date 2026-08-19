@@ -1,0 +1,8 @@
+name: smoke-core
+agent:
+    name: opportunity-proposal-agent
+    kind: hosted
+    config: .agent_configs\baseline\metadata.yaml
+options:
+    eval_model: GPT-5.2
+max_samples: 15

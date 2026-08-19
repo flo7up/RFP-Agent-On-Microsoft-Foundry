@@ -14,6 +14,14 @@ Optional environment variables:
     FOUNDRY_IQ_OPPORTUNITY_INDEX_NAME
     FOUNDRY_IQ_OPPORTUNITY_KNOWLEDGE_SOURCE_NAME
     FOUNDRY_IQ_OPPORTUNITY_KNOWLEDGE_BASE_NAME
+    FOUNDRY_IQ_PROPOSAL_INDEX_NAME
+    FOUNDRY_IQ_PROPOSAL_KNOWLEDGE_SOURCE_NAME
+    FOUNDRY_IQ_PROPOSAL_KNOWLEDGE_BASE_NAME
+
+Required embedding environment variables:
+    AZURE_OPENAI_EMBEDDING_ENDPOINT
+    AZURE_OPENAI_EMBEDDING_DEPLOYMENT
+    AZURE_OPENAI_EMBEDDING_MODEL
 """
 
 from __future__ import annotations
@@ -22,15 +30,23 @@ import argparse
 import os
 import sys
 from typing import Any
+from urllib.parse import urlsplit
 
 from azure.ai.projects import AIProjectClient
 from azure.core.credentials import AzureKeyCredential
-from azure.identity import AzureCliCredential
+from azure.identity import AzureCliCredential, get_bearer_token_provider
 from azure.search.documents import SearchClient
 from azure.search.documents.indexes import SearchIndexClient
 from azure.search.documents.indexes.models import (
+    AzureOpenAIVectorizer,
+    AzureOpenAIVectorizerParameters,
+    HnswAlgorithmConfiguration,
+    HnswParameters,
     KnowledgeBase,
+    KnowledgeBaseAzureOpenAIModel,
+    KnowledgeRetrievalLowReasoningEffort,
     KnowledgeSourceReference,
+    SearchField,
     SearchableField,
     SearchFieldDataType,
     SearchIndex,
@@ -42,15 +58,25 @@ from azure.search.documents.indexes.models import (
     SemanticPrioritizedFields,
     SemanticSearch,
     SimpleField,
+    VectorSearch,
+    VectorSearchProfile,
 )
 from dotenv import load_dotenv
+from openai import AzureOpenAI
 
 
 SEARCH_API_VERSION = "2026-05-01-preview"
 DEFAULT_INDEX_NAME = "si-healthcare-opportunity-history"
 DEFAULT_KNOWLEDGE_SOURCE_NAME = "si-healthcare-opportunity-history-ks"
 DEFAULT_KNOWLEDGE_BASE_NAME = "si-healthcare-opportunity-assessment-kb"
+DEFAULT_PROPOSAL_INDEX_NAME = "si-healthcare-opportunity-proposals"
+DEFAULT_PROPOSAL_KNOWLEDGE_SOURCE_NAME = "si-healthcare-opportunity-proposals-ks"
+DEFAULT_PROPOSAL_KNOWLEDGE_BASE_NAME = "si-healthcare-opportunity-proposals-kb"
 SEMANTIC_CONFIGURATION_NAME = "opportunity-project-semantic-config"
+VECTOR_ALGORITHM_NAME = "opportunity-content-hnsw"
+VECTOR_PROFILE_NAME = "opportunity-content-vector-profile"
+VECTORIZER_NAME = "opportunity-content-azure-openai-vectorizer"
+VECTOR_FIELD_NAME = "content_vector"
 
 SECTION_FIELDS = (
     ("executive_summary", "Executive Summary"),
@@ -289,6 +315,46 @@ def resource_names() -> tuple[str, str, str]:
     )
 
 
+def proposal_resource_names() -> tuple[str, str, str]:
+    return (
+        os.getenv("FOUNDRY_IQ_PROPOSAL_INDEX_NAME", DEFAULT_PROPOSAL_INDEX_NAME),
+        os.getenv("FOUNDRY_IQ_PROPOSAL_KNOWLEDGE_SOURCE_NAME", DEFAULT_PROPOSAL_KNOWLEDGE_SOURCE_NAME),
+        os.getenv("FOUNDRY_IQ_PROPOSAL_KNOWLEDGE_BASE_NAME", DEFAULT_PROPOSAL_KNOWLEDGE_BASE_NAME),
+    )
+
+
+def embedding_settings() -> tuple[str, str, str, int]:
+    endpoint = required_setting("AZURE_OPENAI_EMBEDDING_ENDPOINT").rstrip("/")
+    deployment = required_setting("AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
+    model = os.getenv("AZURE_OPENAI_EMBEDDING_MODEL", deployment)
+    default_dimensions = {
+        "text-embedding-ada-002": 1536,
+        "text-embedding-3-small": 1536,
+        "text-embedding-3-large": 3072,
+    }
+    dimensions = int(
+        os.getenv("AZURE_OPENAI_EMBEDDING_DIMENSIONS", str(default_dimensions.get(model, 3072)))
+    )
+    return endpoint, deployment, model, dimensions
+
+
+def planner_settings() -> tuple[str, str, str]:
+    project_endpoint = required_setting(
+        "FOUNDRY_PROJECT_ENDPOINT",
+        "AZURE_AI_PROJECT_ENDPOINT",
+        "project_endpoint",
+    )
+    parsed_endpoint = urlsplit(project_endpoint)
+    resource_url = f"{parsed_endpoint.scheme}://{parsed_endpoint.netloc}"
+    deployment = required_setting(
+        "AZURE_AI_MODEL_DEPLOYMENT_NAME",
+        "FOUNDRY_MODEL",
+        "deployment_name",
+    )
+    model = os.getenv("FOUNDRY_IQ_PLANNER_MODEL_NAME", deployment.lower())
+    return resource_url, deployment, model
+
+
 def search_access(credential: AzureCliCredential) -> tuple[str, Any]:
     endpoint = os.getenv("FOUNDRY_IQ_SEARCH_ENDPOINT") or os.getenv("AZURE_SEARCH_ENDPOINT")
     if endpoint:
@@ -300,7 +366,10 @@ def search_access(credential: AzureCliCredential) -> tuple[str, Any]:
     )
     try:
         connection = project_client.connections.get(
-            name=required_setting("FOUNDRY_IQ_SEARCH_CONNECTION_NAME"),
+            name=required_setting(
+                "FOUNDRY_IQ_SEARCH_CONNECTION_NAME",
+                "AZURE_AI_SEARCH_CONNECTION_NAME",
+            ),
             include_credentials=True,
         )
     finally:
@@ -313,11 +382,11 @@ def search_access(credential: AzureCliCredential) -> tuple[str, Any]:
     return connection.target.rstrip("/"), search_credential
 
 
-def build_documents() -> list[dict[str, str]]:
+def build_documents() -> list[dict[str, Any]]:
     if len(SAMPLE_PROJECTS) != 3:
         raise ValueError("The ingestion demo must contain exactly three sample projects.")
 
-    documents: list[dict[str, str]] = []
+    documents: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
     required_metadata = ("id", "title", "customer", "industry", "document_type", "source_path")
     for project in SAMPLE_PROJECTS:
@@ -340,7 +409,83 @@ def build_documents() -> list[dict[str, str]]:
     return documents
 
 
-def create_index(index_name: str) -> SearchIndex:
+def build_proposal_documents() -> list[dict[str, Any]]:
+    proposals: list[dict[str, Any]] = []
+    for project in SAMPLE_PROJECTS:
+        proposal = {
+            "id": f"{project['id']}-proposal",
+            "opportunity_id": project["id"],
+            "title": f"Proposal for {project['title']}",
+            "customer": project["customer"],
+            "industry": project["industry"],
+            "document_type": "proposal",
+            "source_path": project["source_path"],
+            "executive_summary": project["executive_summary"],
+            "customer_situation": project["customer_situation"],
+            "recommended_architecture": project["recommended_architecture"],
+            "microsoft_services_used": project["microsoft_services_used"],
+            "implementation_timeline": project["implementation_timeline"],
+            "security_considerations": project["security_considerations"],
+            "governance_controls": project["governance_controls"],
+            "success_metrics": project["success_metrics"],
+            "lessons_learned": project["lessons_learned"],
+            "future_expansion_opportunities": project["future_expansion_opportunities"],
+            "content": "\n\n".join(
+                f"{heading}\n{project[field]}"
+                for field, heading in SECTION_FIELDS
+            ),
+        }
+        proposals.append(proposal)
+    return proposals
+
+
+def add_embeddings(
+    documents: list[dict[str, Any]],
+    credential: AzureCliCredential,
+    *,
+    embedding_endpoint: str,
+    embedding_deployment: str,
+    embedding_dimensions: int,
+) -> list[dict[str, Any]]:
+    token_provider = get_bearer_token_provider(
+        credential,
+        "https://cognitiveservices.azure.com/.default",
+    )
+    client = AzureOpenAI(
+        azure_endpoint=embedding_endpoint,
+        azure_ad_token_provider=token_provider,
+        api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-10-21"),
+    )
+    try:
+        response = client.embeddings.create(
+            model=embedding_deployment,
+            input=[document["content"] for document in documents],
+            dimensions=embedding_dimensions,
+            encoding_format="float",
+        )
+    finally:
+        client.close()
+
+    vectors_by_position = {item.index: item.embedding for item in response.data}
+    if len(vectors_by_position) != len(documents):
+        raise RuntimeError("The embedding response did not contain one vector per document.")
+
+    embedded_documents = []
+    for position, document in enumerate(documents):
+        embedded_document = dict(document)
+        embedded_document[VECTOR_FIELD_NAME] = vectors_by_position[position]
+        embedded_documents.append(embedded_document)
+    return embedded_documents
+
+
+def create_index(
+    index_name: str,
+    *,
+    embedding_endpoint: str,
+    embedding_deployment: str,
+    embedding_model: str,
+    embedding_dimensions: int,
+) -> SearchIndex:
     section_fields = [
         SearchableField(name=field, type=SearchFieldDataType.String)
         for field, _ in SECTION_FIELDS
@@ -355,8 +500,17 @@ def create_index(index_name: str) -> SearchIndex:
             SearchableField(name="industry", type=SearchFieldDataType.String, filterable=True, facetable=True),
             SimpleField(name="document_type", type=SearchFieldDataType.String, filterable=True, facetable=True),
             SearchableField(name="source_path", type=SearchFieldDataType.String, filterable=True),
+            SimpleField(name="opportunity_id", type=SearchFieldDataType.String, filterable=True, facetable=True),
             *section_fields,
             SearchableField(name="content", type=SearchFieldDataType.String),
+            SearchField(
+                name=VECTOR_FIELD_NAME,
+                type=SearchFieldDataType.Collection(SearchFieldDataType.Single),
+                searchable=True,
+                hidden=True,
+                vector_search_dimensions=embedding_dimensions,
+                vector_search_profile_name=VECTOR_PROFILE_NAME,
+            ),
         ],
         semantic_search=SemanticSearch(
             default_configuration_name=SEMANTIC_CONFIGURATION_NAME,
@@ -374,13 +528,38 @@ def create_index(index_name: str) -> SearchIndex:
                 )
             ],
         ),
+        vector_search=VectorSearch(
+            algorithms=[
+                HnswAlgorithmConfiguration(
+                    name=VECTOR_ALGORITHM_NAME,
+                    parameters=HnswParameters(metric="cosine"),
+                )
+            ],
+            profiles=[
+                VectorSearchProfile(
+                    name=VECTOR_PROFILE_NAME,
+                    algorithm_configuration_name=VECTOR_ALGORITHM_NAME,
+                    vectorizer_name=VECTORIZER_NAME,
+                )
+            ],
+            vectorizers=[
+                AzureOpenAIVectorizer(
+                    vectorizer_name=VECTORIZER_NAME,
+                    parameters=AzureOpenAIVectorizerParameters(
+                        resource_url=embedding_endpoint,
+                        deployment_name=embedding_deployment,
+                        model_name=embedding_model,
+                    ),
+                )
+            ],
+        ),
     )
 
 
 def create_knowledge_source(index_name: str, knowledge_source_name: str) -> SearchIndexKnowledgeSource:
     searchable_fields = [
         SearchIndexFieldReference(name=field)
-        for field in ("title", "customer", "industry", "content")
+        for field in ("title", "customer", "industry", "content", VECTOR_FIELD_NAME)
     ]
     source_fields = [
         SearchIndexFieldReference(name=field)
@@ -391,6 +570,7 @@ def create_knowledge_source(index_name: str, knowledge_source_name: str) -> Sear
             "industry",
             "document_type",
             "source_path",
+            "opportunity_id",
             *(field for field, _ in SECTION_FIELDS),
             "content",
         )
@@ -409,7 +589,7 @@ def create_knowledge_source(index_name: str, knowledge_source_name: str) -> Sear
     )
 
 
-def print_dry_run(documents: list[dict[str, str]]) -> None:
+def print_dry_run(documents: list[dict[str, Any]]) -> None:
     print(f"Validated {len(documents)} sample historical projects.")
     print(f"Each project contains {len(SECTION_FIELDS)} required sections:")
     print("  " + ", ".join(heading for _, heading in SECTION_FIELDS))
@@ -417,47 +597,132 @@ def print_dry_run(documents: list[dict[str, str]]) -> None:
         print(f"  - {document['title']}")
 
 
-def ingest(documents: list[dict[str, str]], credential: AzureCliCredential) -> None:
-    index_name, knowledge_source_name, knowledge_base_name = resource_names()
+def create_knowledge_base(
+    knowledge_base_name: str,
+    knowledge_source_name: str,
+    description: str,
+) -> KnowledgeBase:
+    planner_endpoint, planner_deployment, planner_model = planner_settings()
+    return KnowledgeBase(
+        name=knowledge_base_name,
+        description=description,
+        knowledge_sources=[KnowledgeSourceReference(name=knowledge_source_name)],
+        models=[
+            KnowledgeBaseAzureOpenAIModel(
+                azure_open_ai_parameters=AzureOpenAIVectorizerParameters(
+                    resource_url=planner_endpoint,
+                    deployment_name=planner_deployment,
+                    model_name=planner_model,
+                )
+            )
+        ],
+        retrieval_reasoning_effort=KnowledgeRetrievalLowReasoningEffort(),
+        output_mode="extractiveData",
+    )
+
+
+def ingest(documents: list[dict[str, Any]], credential: AzureCliCredential) -> None:
+    opportunity_index_name, knowledge_source_name, knowledge_base_name = resource_names()
+    proposal_index_name, proposal_source_name, proposal_base_name = proposal_resource_names()
+    embedding_endpoint, embedding_deployment, embedding_model, embedding_dimensions = embedding_settings()
+    documents = add_embeddings(
+        documents,
+        credential,
+        embedding_endpoint=embedding_endpoint,
+        embedding_deployment=embedding_deployment,
+        embedding_dimensions=embedding_dimensions,
+    )
+    proposal_documents = add_embeddings(
+        build_proposal_documents(),
+        credential,
+        embedding_endpoint=embedding_endpoint,
+        embedding_deployment=embedding_deployment,
+        embedding_dimensions=embedding_dimensions,
+    )
     endpoint, search_credential = search_access(credential)
     index_client = SearchIndexClient(
         endpoint=endpoint,
         credential=search_credential,
         api_version=SEARCH_API_VERSION,
     )
-    search_client = SearchClient(
-        endpoint=endpoint,
-        index_name=index_name,
-        credential=search_credential,
-        api_version=SEARCH_API_VERSION,
-    )
     try:
         print("\nINGESTING SAMPLE OPPORTUNITY HISTORY")
-        print(f"  [1/4] Creating or updating index: {index_name}")
-        index_client.create_or_update_index(create_index(index_name))
-
-        print(f"  [2/4] Uploading {len(documents)} structured project documents")
-        results = search_client.upload_documents(documents=documents)
-        failures = [result.key for result in results if not result.succeeded]
-        if failures:
-            raise RuntimeError(f"Failed to upload documents: {', '.join(failures)}")
-        print(f"        Accepted documents: {sum(result.succeeded for result in results)}")
-
-        print(f"  [3/4] Creating or updating knowledge source: {knowledge_source_name}")
-        index_client.create_or_update_knowledge_source(
-            create_knowledge_source(index_name, knowledge_source_name)
+        print(f"  [1/5] Creating or updating opportunity index: {opportunity_index_name}")
+        index_client.create_or_update_index(
+            create_index(
+                opportunity_index_name,
+                embedding_endpoint=embedding_endpoint,
+                embedding_deployment=embedding_deployment,
+                embedding_model=embedding_model,
+                embedding_dimensions=embedding_dimensions,
+            )
         )
 
-        print(f"  [4/4] Creating or updating knowledge base: {knowledge_base_name}")
+        search_client = SearchClient(
+            endpoint=endpoint,
+            index_name=opportunity_index_name,
+            credential=search_credential,
+            api_version=SEARCH_API_VERSION,
+        )
+        try:
+            print(f"  [2/5] Uploading {len(documents)} structured project documents")
+            results = search_client.upload_documents(documents=documents)
+            failures = [result.key for result in results if not result.succeeded]
+            if failures:
+                raise RuntimeError(f"Failed to upload documents: {', '.join(failures)}")
+            print(f"        Accepted documents: {sum(result.succeeded for result in results)}")
+        finally:
+            search_client.close()
+
+        print(f"  [3/5] Creating or updating opportunity knowledge source: {knowledge_source_name}")
+        index_client.create_or_update_knowledge_source(
+            create_knowledge_source(opportunity_index_name, knowledge_source_name)
+        )
+
+        print(f"  [4/5] Creating or updating opportunity knowledge base: {knowledge_base_name}")
         index_client.create_or_update_knowledge_base(
-            KnowledgeBase(
-                name=knowledge_base_name,
-                description="Organizational project memory for SI opportunity and offer acceleration.",
-                knowledge_sources=[KnowledgeSourceReference(name=knowledge_source_name)],
+            create_knowledge_base(
+                knowledge_base_name,
+                knowledge_source_name,
+                "Organizational opportunity memory for SI opportunity and offer acceleration.",
+            )
+        )
+
+        print(f"  [5/5] Creating proposal index and retrieval base: {proposal_index_name}")
+        index_client.create_or_update_index(
+            create_index(
+                proposal_index_name,
+                embedding_endpoint=embedding_endpoint,
+                embedding_deployment=embedding_deployment,
+                embedding_model=embedding_model,
+                embedding_dimensions=embedding_dimensions,
+            )
+        )
+        proposal_search_client = SearchClient(
+            endpoint=endpoint,
+            index_name=proposal_index_name,
+            credential=search_credential,
+            api_version=SEARCH_API_VERSION,
+        )
+        try:
+            proposal_results = proposal_search_client.upload_documents(documents=proposal_documents)
+            proposal_failures = [result.key for result in proposal_results if not result.succeeded]
+            if proposal_failures:
+                raise RuntimeError(f"Failed to upload proposal documents: {', '.join(proposal_failures)}")
+            print(f"        Accepted proposal documents: {sum(result.succeeded for result in proposal_results)}")
+        finally:
+            proposal_search_client.close()
+        index_client.create_or_update_knowledge_source(
+            create_knowledge_source(proposal_index_name, proposal_source_name)
+        )
+        index_client.create_or_update_knowledge_base(
+            create_knowledge_base(
+                proposal_base_name,
+                proposal_source_name,
+                "Historical proposal and solution patterns linked back to relevant opportunities.",
             )
         )
     finally:
-        search_client.close()
         index_client.close()
     print("Foundry IQ ingestion complete.\n")
 
@@ -473,6 +738,8 @@ def main() -> None:
     documents = build_documents()
     if args.dry_run:
         print_dry_run(documents)
+        if build_proposal_documents():
+            print(f"Also prepared {len(build_proposal_documents())} proposal sample documents for the proposal index.")
         return
 
     credential = AzureCliCredential()
