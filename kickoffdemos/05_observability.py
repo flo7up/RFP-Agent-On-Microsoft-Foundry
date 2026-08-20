@@ -1,4 +1,4 @@
-"""Demo 4: export Agent Framework traces and record a custom evaluation score.
+"""Demo 5: export Agent Framework traces and record a custom evaluation score.
 
 Capability: Sends agent telemetry to Application Insights, OTLP, or Foundry Toolkit and
 records a lightweight enterprise-coverage evaluation on the same trace.
@@ -135,7 +135,7 @@ async def main() -> None:
     credential = AzureCliCredential()
 
     try:
-        print("\nDEMO 4 - EVALUATION + TRACING")
+        print("\nDEMO 5 - EVALUATION + TRACING")
         print(f"Telemetry destination: {destination}")
         tracer = get_tracer("partner-kickoff-demo")
         with tracer.start_as_current_span("partner.solution_assessment") as span:

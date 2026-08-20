@@ -26,15 +26,18 @@ def load_module(name: str, filename: str):
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Unable to load {filename}")
     module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
 
 
 intro = load_module("demo_intro", "01_intro.py")
 patterns = load_module("demo_patterns", "02_patterns.py")
-hosted_patterns = load_module("demo_hosted_patterns", "03_patterns.py")
-hosted_tools = load_module("demo_hosted_tools", "03_hosted_tools.py")
-observability = load_module("demo_observability", "04_observability.py")
+harness = load_module("demo_harness", "03_harness.py")
+simple_harness = load_module("demo_simple_harness", "03_harness_simple.py")
+hosted_patterns = load_module("demo_hosted_patterns", "hosted_proposal_agent.py")
+hosted_tools = load_module("demo_hosted_tools", "04_hosted_tools.py")
+observability = load_module("demo_observability", "05_observability.py")
 ingestion = load_module("demo_ingestion", "ingest_foundry_iq.py")
 
 
@@ -139,6 +142,20 @@ class IngestionContractTests(unittest.TestCase):
 
 
 class FoundryIqContractTests(unittest.TestCase):
+    def test_proposal_prompt_ends_with_formatting_guidelines(self) -> None:
+        source = (DEMOS / "02_patterns.py").read_text(encoding="utf-8")
+        prompt_end = source.index("Formatting guidelines:")
+
+        self.assertGreater(prompt_end, source.index("Foundry IQ evidence:\n{grounding}"))
+        for requirement in (
+            "level-two Markdown heading",
+            "implementation timeline as a Markdown table",
+            "citations immediately after the historical claim",
+            "do not add another title",
+            "add a Sources section",
+        ):
+            self.assertIn(requirement, source[prompt_end:])
+
     def test_retrieval_closes_client_on_success_and_failure(self) -> None:
         successful_client = Mock()
         successful_client.retrieve.return_value = self._retrieval_result()
@@ -238,21 +255,443 @@ class FoundryIqContractTests(unittest.TestCase):
 
 
 class DevUiContractTests(unittest.TestCase):
+    def test_workflow_output_enriches_the_current_executor_span(self) -> None:
+        span = Mock()
+        span.is_recording.return_value = True
+        output_span = Mock()
+        output_span_context = MagicMock()
+        output_span_context.__enter__.return_value = output_span
+        tracer = Mock()
+        tracer.start_as_current_span.return_value = output_span_context
+
+        with (
+            patch.object(patterns.trace, "get_current_span", return_value=span),
+            patch.object(patterns.trace, "get_tracer", return_value=tracer),
+        ):
+            patterns.trace_workflow_output(
+                "retrieve_opportunities",
+                "Matched 2 historical opportunities: Northwind; Fabrikam",
+                output_data='{"grounding_text": "Retrieved evidence"}',
+                reference_count=2,
+                reference_titles=["Northwind", "Fabrikam"],
+            )
+
+        expected_attributes = {
+            "demo.workflow.executor_id": "retrieve_opportunities",
+            "demo.workflow.output.summary": "Matched 2 historical opportunities: Northwind; Fabrikam",
+            "demo.workflow.output.reference_count": 2,
+            "demo.workflow.output.reference_titles": ["Northwind", "Fabrikam"],
+        }
+        for name, value in expected_attributes.items():
+            span.set_attribute.assert_any_call(name, value)
+        span.add_event.assert_called_once_with(
+            "demo.workflow.output",
+            attributes=expected_attributes,
+        )
+        tracer.start_as_current_span.assert_called_once_with(
+            "workflow.output retrieve_opportunities"
+        )
+        output_span.set_attribute.assert_any_call(
+            "demo.workflow.output.data",
+            '{"grounding_text": "Retrieved evidence"}',
+        )
+        output_span.set_attribute.assert_any_call(
+            "demo.workflow.output.content_captured",
+            True,
+        )
+        output_span.add_event.assert_called_once_with(
+            "demo.workflow.output",
+            attributes=expected_attributes,
+        )
+
+    def test_proposal_workflow_has_explicit_nodes_and_edges(self) -> None:
+        with patch.object(patterns, "create_assessment_agent", return_value=object()):
+            workflow = patterns.create_proposal_workflow(object())
+
+        executor_ids = [executor.id for executor in workflow.get_executors_list()]
+        self.assertEqual(
+            executor_ids,
+            [
+                "retrieve_opportunities",
+                "retrieve_linked_proposals",
+                "draft_proposal",
+                "assemble_sources",
+            ],
+        )
+        graph = workflow.to_dict()
+        edges = [
+            (edge["source_id"], edge["target_id"])
+            for group in graph["edge_groups"]
+            if group["type"] == "SingleEdgeGroup"
+            for edge in group["edges"]
+        ]
+        self.assertEqual(
+            edges,
+            [
+                ("retrieve_opportunities", "retrieve_linked_proposals"),
+                ("retrieve_linked_proposals", "draft_proposal"),
+                ("draft_proposal", "assemble_sources"),
+            ],
+        )
+        self.assertEqual(workflow.get_start_executor().id, "retrieve_opportunities")
+        self.assertEqual([executor.id for executor in workflow.get_output_executors()], ["assemble_sources"])
+        self.assertEqual(workflow.get_intermediate_executors(), [])
+
+    def test_workflow_input_explains_the_expected_opportunity(self) -> None:
+        schema = patterns.OpportunityWorkflowInput.model_json_schema()
+
+        self.assertEqual(schema["title"], "Customer Opportunity / Call for Offer")
+        opportunity_schema = schema["properties"]["opportunity_text"]
+        self.assertEqual(opportunity_schema["title"], "Customer Opportunity / Call-for-Offer Text")
+        self.assertIn("business goal", opportunity_schema["description"])
+        self.assertEqual(opportunity_schema["minLength"], 1)
+        self.assertEqual(schema["required"], ["opportunity_text"])
+
+    def test_devui_short_text_parses_to_workflow_input(self) -> None:
+        from agent_framework_devui._utils import parse_input_for_type
+
+        parsed = parse_input_for_type(
+            {"opportunity_text": "test"},
+            patterns.OpportunityWorkflowInput,
+        )
+
+        self.assertIsInstance(parsed, patterns.OpportunityWorkflowInput)
+        self.assertEqual(parsed.opportunity_text, "test")
+
     def test_demo_supports_devui_launcher(self) -> None:
         credential = Mock()
-        agent = object()
+        workflow = object()
 
         with (
             patch.object(patterns, "AzureCliCredential", return_value=credential),
-            patch.object(patterns, "create_assessment_agent", return_value=agent),
+            patch.object(
+                patterns,
+                "create_proposal_workflow",
+                return_value=workflow,
+            ) as create_workflow,
             patch.object(patterns, "serve") as serve_mock,
             patch.object(sys, "argv", ["02_patterns.py", "--devui"]),
             patch.object(patterns, "load_dotenv"),
         ):
-            asyncio.run(patterns.main())
+            patterns.main()
 
-        serve_mock.assert_called_once_with(entities=[agent], auto_open=True)
+        create_workflow.assert_called_once_with(
+            credential,
+            include_trace_content=True,
+            persist_draft=True,
+        )
+        serve_mock.assert_called_once_with(
+            entities=[workflow],
+            host="127.0.0.1",
+            port=8080,
+            auto_open=True,
+            auth_enabled=False,
+            instrumentation_enabled=True,
+        )
         credential.close.assert_called_once_with()
+
+    def test_devui_proposal_includes_workflow_trace(self) -> None:
+        with patch.object(
+            patterns,
+            "run_proposal_workflow",
+            AsyncMock(
+                return_value=(
+                    "# Draft Opportunity Proposal",
+                    [
+                        "Stage 1/4: matched historical opportunities.",
+                        "Stage 2/4: retrieved linked proposals.",
+                    ],
+                )
+            ),
+        ):
+            result = asyncio.run(patterns.create_devui_proposal("Opportunity", object()))
+
+        self.assertIn("# Workflow Trace", result)
+        self.assertIn("Stage 1/4", result)
+        self.assertIn("Stage 2/4", result)
+        self.assertIn("# Draft Opportunity Proposal", result)
+
+
+class HarnessContractTests(unittest.TestCase):
+    def test_harness_observer_reports_real_todo_planning_lifecycle(self) -> None:
+        events = []
+        middleware = harness.HarnessObserverMiddleware(events.append)
+        context = SimpleNamespace(
+            function=SimpleNamespace(name="todos_add"),
+            arguments={
+                "todos": [
+                    {"title": "Match historical opportunities"},
+                    {"title": "Draft a cited proposal"},
+                ]
+            },
+            result=None,
+        )
+
+        async def call_next() -> None:
+            context.result = SimpleNamespace(
+                type="function_result",
+                result=[
+                    [
+                        SimpleNamespace(
+                            type="text",
+                            text=(
+                                '[{"id": 1, "title": "Match historical opportunities"}, '
+                                '{"id": 2, "title": "Draft a cited proposal"}]'
+                            ),
+                        )
+                    ]
+                ],
+            )
+
+        asyncio.run(middleware.process(context, call_next))
+
+        self.assertEqual(
+            [event.kind for event in events],
+            ["plan.started", "plan.completed"],
+        )
+        self.assertEqual(events[0].location, "planning_desk")
+        self.assertEqual(
+            [todo["title"] for todo in events[1].data["todos"]],
+            ["Match historical opportunities", "Draft a cited proposal"],
+        )
+
+        remove_context = SimpleNamespace(
+            function=SimpleNamespace(name="todos_remove"),
+            arguments={"ids": [2]},
+            result=None,
+        )
+
+        async def remove_next() -> None:
+            remove_context.result = '{"removed": 1}'
+
+        asyncio.run(middleware.process(remove_context, remove_next))
+
+        self.assertEqual(events[-1].kind, "plan.removed")
+        self.assertEqual(events[-1].data["removed_ids"], [2])
+
+    def test_simple_harness_uses_only_one_synthetic_tool(self) -> None:
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "FOUNDRY_PROJECT_ENDPOINT": "https://project.example.test",
+                    "AZURE_AI_MODEL_DEPLOYMENT_NAME": "model",
+                },
+            ),
+            patch.object(simple_harness, "FoundryChatClient"),
+            patch.object(simple_harness, "create_harness_agent", return_value=object()) as create_agent,
+        ):
+            agent = simple_harness.create_agent(object())
+
+        options = create_agent.call_args.kwargs
+        self.assertIsNotNone(agent)
+        self.assertEqual([tool.name for tool in options["tools"]], ["get_weather"])
+        self.assertTrue(options["disable_todo"])
+        self.assertTrue(options["disable_mode"])
+        self.assertTrue(options["disable_file_memory"])
+        self.assertTrue(options["disable_web_search"])
+        self.assertEqual(options["default_options"], {"store": False})
+
+    def test_harness_uses_bounded_tools_todos_and_execute_mode(self) -> None:
+        style_reviewer = object()
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "FOUNDRY_PROJECT_ENDPOINT": "https://project.example.test",
+                    "AZURE_AI_MODEL_DEPLOYMENT_NAME": "model",
+                },
+            ),
+            patch.object(harness, "FoundryChatClient"),
+            patch.object(harness, "Agent", return_value=style_reviewer) as agent_type,
+            patch.object(harness, "create_harness_agent", return_value=object()) as create_agent,
+        ):
+            demo = harness.create_harness_demo(object())
+
+        options = create_agent.call_args.kwargs
+        self.assertEqual(
+            [tool.name for tool in options["tools"]],
+            [
+                "find_similar_opportunities",
+                "retrieve_linked_proposals",
+                "review_proposal_style",
+                "publish_grounded_proposal",
+            ],
+        )
+        reviewer_options = agent_type.call_args.kwargs
+        self.assertEqual(reviewer_options["name"], harness.STYLE_REVIEWER_NAME)
+        self.assertEqual(reviewer_options["default_options"], {"store": False})
+        self.assertIs(options["todo_provider"], demo.todo_provider)
+        self.assertIs(options["mode_provider"], demo.mode_provider)
+        self.assertEqual(demo.mode_provider.default_mode, "execute")
+        self.assertTrue(options["disable_web_search"])
+        self.assertEqual(options["loop_max_iterations"], 16)
+        self.assertNotIn("exactly once", options["agent_instructions"])
+        self.assertIn("Do not collapse the plan into a generic four-item", options["agent_instructions"])
+        self.assertIn("revisit either retrieval step", options["agent_instructions"])
+        self.assertIn("Call review_proposal_style", options["agent_instructions"])
+        self.assertEqual(options["default_options"], {"store": False})
+
+    def test_harness_tools_enforce_order_and_publish_cited_proposal(self) -> None:
+        credential = object()
+        events = []
+        opportunity_evidence = patterns.OpportunityEvidence(
+            opportunity="Opportunity",
+            grounding_text="Matched opportunity evidence [0]",
+            references=[
+                {
+                    "id": "0",
+                    "source_data": {
+                        "id": "opportunity-1",
+                        "title": "Historical Opportunity",
+                        "customer": "Contoso",
+                    },
+                }
+            ],
+            proposal_filter="opportunity_id eq 'opportunity-1'",
+        )
+        proposal_evidence = patterns.ProposalEvidence(
+            opportunity="Opportunity",
+            opportunity_text=opportunity_evidence.grounding_text,
+            opportunity_references=opportunity_evidence.references,
+            proposal_text="Linked proposal evidence [1]",
+            proposal_references=[
+                {
+                    "id": "1",
+                    "source_data": {
+                        "id": "proposal-1",
+                        "title": "Historical Proposal",
+                        "customer": "Contoso",
+                    },
+                }
+            ],
+        )
+        style_reviewer = Mock()
+        style_reviewer.create_session.return_value = object()
+        with (
+            patch.object(
+                harness.patterns,
+                "retrieve_opportunity_evidence",
+                return_value=opportunity_evidence,
+            ),
+            patch.object(
+                harness.patterns,
+                "retrieve_linked_proposal_evidence",
+                return_value=proposal_evidence,
+            ),
+            patch.object(
+                harness.patterns,
+                "upload_proposal",
+                return_value="outputs/harness-proposal.md",
+            ) as upload,
+        ):
+            tools, state = harness.create_harness_tools(
+                credential,
+                style_reviewer=style_reviewer,
+                event=events.append,
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "find_similar_opportunities"):
+                asyncio.run(tools[1].invoke(skip_parsing=True))
+            asyncio.run(
+                tools[0].invoke(
+                    arguments={"opportunity": "Opportunity"},
+                    skip_parsing=True,
+                )
+            )
+            grounding = asyncio.run(tools[1].invoke(skip_parsing=True))
+            proposal = "\n\n".join(
+                f"## {heading}\n\nSupported historical pattern [0]."
+                for heading in harness.REQUIRED_HEADINGS
+            )
+            with self.assertRaisesRegex(RuntimeError, "review_proposal_style"):
+                asyncio.run(
+                    tools[3].invoke(
+                        arguments={"proposal_markdown": proposal},
+                        skip_parsing=True,
+                    )
+                )
+            style_reviewer.run = AsyncMock(
+                side_effect=[
+                    SimpleNamespace(text="## Executive Summary\n\nBroken review."),
+                    SimpleNamespace(text=proposal),
+                ]
+            )
+            with self.assertRaisesRegex(ValueError, "required Markdown sections"):
+                asyncio.run(
+                    tools[2].invoke(
+                        arguments={"proposal_markdown": proposal},
+                        skip_parsing=True,
+                    )
+                )
+            reviewed_proposal = asyncio.run(
+                tools[2].invoke(
+                    arguments={"proposal_markdown": proposal},
+                    skip_parsing=True,
+                )
+            )
+            self.assertEqual(reviewed_proposal, proposal)
+            location = asyncio.run(
+                tools[3].invoke(
+                    arguments={"proposal_markdown": reviewed_proposal},
+                    skip_parsing=True,
+                )
+            )
+
+        self.assertIn("Structured citation catalog", grounding)
+        self.assertEqual(location, "outputs/harness-proposal.md")
+        self.assertEqual(state.published_location, location)
+        published_proposal = upload.call_args.args[1]
+        self.assertTrue(published_proposal.startswith("# Draft Opportunity Proposal"))
+        self.assertIn("## Sources", published_proposal)
+        self.assertIn("[0] Historical Opportunity", published_proposal)
+        self.assertEqual(
+            [event.kind for event in events],
+            [
+                "research.opportunities.started",
+                "research.opportunities.completed",
+                "research.proposals.started",
+                "research.proposals.completed",
+                "document.composing",
+                "review.started",
+                "review.failed",
+                "review.started",
+                "review.completed",
+                "document.drafting",
+                "document.printing",
+                "document.published",
+            ],
+        )
+        self.assertEqual(events[1].data["titles"], ["Historical Opportunity"])
+        self.assertEqual(events[3].data["titles"], ["Historical Proposal"])
+        self.assertEqual(events[-1].data["file_name"], "harness-proposal.md")
+        self.assertEqual(events[-1].data["storage_type"], "local")
+        self.assertEqual(style_reviewer.run.await_count, 2)
+        self.assertTrue(all(call.kwargs["session"] is style_reviewer.create_session.return_value for call in style_reviewer.run.await_args_list))
+
+        with patch.object(
+            harness.patterns,
+            "retrieve_opportunity_evidence",
+            return_value=opportunity_evidence,
+        ):
+            asyncio.run(
+                tools[0].invoke(
+                    arguments={"opportunity": "Refined opportunity"},
+                    skip_parsing=True,
+                )
+            )
+        self.assertIsNotNone(state.opportunity_evidence)
+        self.assertIsNone(state.proposal_evidence)
+        self.assertEqual(state.grounding, "")
+        self.assertEqual(state.reviewed_proposal, "")
+        self.assertIsNone(state.published_location)
+        with self.assertRaisesRegex(RuntimeError, "Retrieve linked proposals"):
+            asyncio.run(
+                tools[3].invoke(
+                    arguments={"proposal_markdown": proposal},
+                    skip_parsing=True,
+                )
+            )
 
 
 class HostedPatternsContractTests(unittest.TestCase):
@@ -297,7 +736,7 @@ class ProposalStorageContractTests(unittest.TestCase):
             patch.object(sys, "argv", ["02_patterns.py"]),
             contextlib.redirect_stdout(io.StringIO()) as output,
         ):
-            asyncio.run(patterns.main())
+            patterns.main()
 
         self.assertEqual(output.getvalue(), f"{proposal_url}\n")
         credential.close.assert_called_once_with()
@@ -328,6 +767,25 @@ class ProposalStorageContractTests(unittest.TestCase):
         self.assertEqual(upload_options["content_settings"].content_type, "text/markdown; charset=utf-8")
         self.assertEqual(url, "https://storage.example.test/proposals/proposal.md?sig=read-only")
         self.assertTrue(generate_sas.call_args.kwargs["permission"].read)
+
+    def test_persisted_draft_filename_is_traced_in_a_separate_span(self) -> None:
+        service, _, _ = self._storage_clients(public_access="blob")
+        created_at = datetime(2026, 8, 19, 12, 34, 56, 789000, tzinfo=timezone.utc)
+        file_name = "draft-opportunity-proposal-20260819T123456789000Z.md"
+
+        with (
+            patch.object(patterns, "BlobServiceClient", return_value=service),
+            patch.object(patterns, "trace_workflow_output") as trace_output,
+            patch.dict(os.environ, {"AZURE_STORAGE_ACCOUNT_URL": "https://storage.example.test"}),
+        ):
+            patterns.upload_proposal(object(), "# Proposal", now=created_at)
+
+        trace_output.assert_called_once_with(
+            "draft_file",
+            f"Saved draft file {file_name} to Azure Blob Storage.",
+            file_name=file_name,
+            storage_type="azure_blob",
+        )
 
     def test_public_container_returns_direct_blob_url(self) -> None:
         service, _, _ = self._storage_clients(public_access="blob")
@@ -360,17 +818,17 @@ class ProposalStorageContractTests(unittest.TestCase):
         self.assertEqual(output_path.read_text(encoding="utf-8"), "# Proposal")
 
     def test_create_proposal_appends_sources_section(self) -> None:
-        agent = Mock()
-        agent.run = AsyncMock(return_value=SimpleNamespace(text="Recommended approach [0]."))
+        proposal = (
+            "# Draft Opportunity Proposal\n\n"
+            "Recommended approach [0].\n\n"
+            "## Sources\n\n"
+            "- [0] Apex Health — Contoso, Healthcare (History/Apex)\n"
+        )
         with (
-            patch.object(patterns, "create_assessment_agent", return_value=agent),
             patch.object(
                 patterns,
-                "retrieve_project_memory",
-                return_value=(
-                    "Grounded evidence [0]\n\nStructured citation catalog:\n"
-                    '{"reference_id": "0", "title": "Apex Health", "customer": "Contoso", "industry": "Healthcare", "source_path": "History/Apex"}'
-                ),
+                "run_proposal_workflow",
+                AsyncMock(return_value=(proposal, [])),
             ),
             patch.object(patterns, "upload_proposal", return_value="https://storage.example.test/proposals/proposal.md") as upload,
         ):
@@ -401,9 +859,9 @@ class DemoStoryContractTests(unittest.TestCase):
         for filename in (
             "01_intro.py",
             "02_patterns.py",
-            "03_patterns.py",
-            "03_hosted_tools.py",
-            "04_observability.py",
+            "hosted_proposal_agent.py",
+            "04_hosted_tools.py",
+            "05_observability.py",
         ):
             tree = ast.parse((DEMOS / filename).read_text(encoding="utf-8"), filename=filename)
             agent_calls.extend(

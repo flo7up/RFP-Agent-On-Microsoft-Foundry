@@ -1,4 +1,4 @@
-"""Demo 3: ground an agent with enterprise tools and optionally host it in Foundry.
+"""Demo 4: ground an agent with enterprise tools and optionally host it in Foundry.
 
 Capability: Uses bounded CRM, architecture-guidance, and cost-profile tools, then runs the
 same agent locally or behind the Foundry Responses hosting boundary.
@@ -111,7 +111,7 @@ def create_agent(credential: Any) -> Agent:
 
 
 async def run_local(prompt: str) -> None:
-    print("\nDEMO 3 - ENTERPRISE TOOLS + HOSTED AGENT")
+    print("\nDEMO 4 - ENTERPRISE TOOLS + HOSTED AGENT")
     print("The same agent boundary runs locally or behind Foundry's Responses protocol.\n")
     credential = AzureCliCredential()
     try:

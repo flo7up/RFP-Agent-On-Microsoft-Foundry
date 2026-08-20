@@ -2,7 +2,7 @@
 
 This guide explains how to prepare the local environment and run every demo in this repository. It is the operator-focused companion to [DEMO_GUIDE.md](DEMO_GUIDE.md), which contains the presentation narrative and timing.
 
-The demos make live calls to Microsoft Foundry. Demo 2 also uses Azure AI Search and Foundry IQ, with optional Blob Storage. Demo 4 can export telemetry. The healthcare opportunity and historical projects are synthetic, but Azure model, Search, optional Storage, and telemetry usage may incur charges.
+The demos make live calls to Microsoft Foundry. Demos 2 and 3 also use Azure AI Search and Foundry IQ, with optional Blob Storage. Demo 5 can export telemetry. The healthcare opportunity and historical projects are synthetic, but Azure model, Search, optional Storage, and telemetry usage may incur charges.
 
 ## Run order
 
@@ -12,7 +12,7 @@ For a complete demonstration, use this order:
 2. Configure `.env`.
 3. Run the offline tests and Foundry IQ dry run.
 4. Ingest three synthetic opportunities and their three linked proposals for Demo 2.
-5. Run Demos 1 through 4.
+5. Run Demos 1 through 5.
 
 The shortest command sequence, after setup and configuration, is:
 
@@ -22,8 +22,9 @@ The shortest command sequence, after setup and configuration, is:
 .\.venv\Scripts\python.exe -B kickoffdemos\ingest_foundry_iq.py
 .\.venv\Scripts\python.exe -B kickoffdemos\01_intro.py
 .\.venv\Scripts\python.exe -B kickoffdemos\02_patterns.py
-.\.venv\Scripts\python.exe -B kickoffdemos\03_hosted_tools.py
-.\.venv\Scripts\python.exe -B kickoffdemos\04_observability.py
+.\.venv\Scripts\python.exe -B kickoffdemos\03_harness.py
+.\.venv\Scripts\python.exe -B kickoffdemos\04_hosted_tools.py
+.\.venv\Scripts\python.exe -B kickoffdemos\05_observability.py
 ```
 
 Run every command from the repository root, the directory containing [README.md](README.md) and [requirements.txt](requirements.txt).
@@ -38,7 +39,7 @@ The validated runtime is Python 3.12. You also need Azure CLI and access to:
 - An Azure AI Search service for Demo 2.
 - A Search connection in the Foundry project, or a direct Search endpoint with RBAC access.
 - An Azure Storage account for Demo 2 proposal output.
-- Optionally, Application Insights, an OTLP endpoint, or the Foundry Toolkit trace viewer for exported Demo 4 traces.
+- Optionally, Application Insights, an OTLP endpoint, or the Foundry Toolkit trace viewer for exported Demo 5 traces.
 
 Check the local tools in PowerShell:
 
@@ -145,7 +146,7 @@ AZURE_STORAGE_ACCOUNT_URL=https://your-storage-account.blob.core.windows.net
 
 The script creates a missing container as private. It returns a one-hour, read-only user-delegation SAS URL for a private container. If an existing container already has anonymous blob or container access, it returns the direct URL. The script does not change public-access policy.
 
-### Optional telemetry for Demo 4
+### Optional telemetry for Demo 5
 
 Configure at most one preferred export destination:
 
@@ -154,7 +155,7 @@ Configure at most one preferred export destination:
 # OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
 ```
 
-Destination precedence is Application Insights, then an explicit OTLP endpoint, then a running Foundry Toolkit trace viewer on `localhost:4317`. If none is available, Demo 4 still runs and computes its score, but it reports local spans only.
+Destination precedence is Application Insights, then an explicit OTLP endpoint, then a running Foundry Toolkit trace viewer on `localhost:4317`. If none is available, Demo 5 still runs and computes its score, but it reports local spans only.
 
 ## 5. Run offline preflight checks
 
@@ -183,8 +184,9 @@ You can also inspect every command-line option without making live calls:
 ```powershell
 .\.venv\Scripts\python.exe -B kickoffdemos\01_intro.py --help
 .\.venv\Scripts\python.exe -B kickoffdemos\02_patterns.py --help
-.\.venv\Scripts\python.exe -B kickoffdemos\03_hosted_tools.py --help
-.\.venv\Scripts\python.exe -B kickoffdemos\04_observability.py --help
+.\.venv\Scripts\python.exe -B kickoffdemos\03_harness.py --help
+.\.venv\Scripts\python.exe -B kickoffdemos\04_hosted_tools.py --help
+.\.venv\Scripts\python.exe -B kickoffdemos\05_observability.py --help
 ```
 
 ## 6. Ingest Foundry IQ project memory
@@ -232,12 +234,45 @@ You may pass a custom opportunity:
 
 Use an opportunity reasonably similar to the three healthcare records. An unrelated opportunity can retrieve weak evidence, which is expected for this small corpus. A private-container URL includes a temporary SAS query string; do not publish that live credential in a recording. Use an approved public container for a clean direct URL, redact the query, or publish the video only after the one-hour SAS expires.
 
-## 9. Run Demo 3: enterprise tools
+## 9. Run Demo 3: Harness orchestration
+
+Run the full comparison with visible progress:
+
+```powershell
+.\.venv\Scripts\python.exe -B kickoffdemos\03_harness.py --verbose
+```
+
+The Harness receives bounded opportunity retrieval, linked-proposal retrieval, and publication tools. It plans the work through its built-in todo and mode providers instead of using the fixed `WorkflowBuilder` graph from Demo 2. A successful run completes its todos, validates citations, publishes a timestamped proposal, and prints the output URL or path.
+
+For the observable pixel-art experience, launch Harness Office and open `http://127.0.0.1:8090`:
+
+```powershell
+.\.venv\Scripts\python.exe -B kickoffdemos\03_harness.py --playground
+```
+
+The live work plan comes from actual `TodoProvider` add, complete, and remove calls; it has no fixed
+step count. Structured middleware and bounded-tool events move the character between the desk,
+Foundry IQ shelves, notebook, and printer. The journey keeps repeated visits, so weak retrieval or a
+failed validation visibly sends the agent back. Timeline messages summarize observable actions and
+results; they do not expose private chain-of-thought. If needed, choose another loopback port with
+`--playground-port <port>`. In idle and after completion, the character returns to its nap nook. Each
+run starts with a visitor ringing the doorbell and handing over the opportunity, which wakes the
+character and plays a short stretch before the first workstation visit.
+
+For the smallest possible one-tool Harness example, run:
+
+```powershell
+.\.venv\Scripts\python.exe -B kickoffdemos\03_harness_simple.py
+```
+
+That companion uses one synthetic weather tool and does not access the opportunity scenario, Search, or Storage.
+
+## 10. Run Demo 4: enterprise tools
 
 Run the tool-grounded agent locally:
 
 ```powershell
-.\.venv\Scripts\python.exe -B kickoffdemos\03_hosted_tools.py
+.\.venv\Scripts\python.exe -B kickoffdemos\04_hosted_tools.py
 ```
 
 The model receives only opportunity ID `OPP-1042` in the default prompt. A successful run normally displays all three bounded tool calls:
@@ -253,7 +288,7 @@ The final recommendation should distinguish approved facts from assumptions, ret
 To supply another instruction while retaining the same approved sample record:
 
 ```powershell
-.\.venv\Scripts\python.exe -B kickoffdemos\03_hosted_tools.py --prompt "Assess OPP-1042 and emphasize governance and delivery risks."
+.\.venv\Scripts\python.exe -B kickoffdemos\04_hosted_tools.py --prompt "Assess OPP-1042 and emphasize governance and delivery risks."
 ```
 
 The simulated CRM only recognizes `OPP-1042`. Other IDs intentionally return no approved record.
@@ -269,17 +304,17 @@ Hosted mode is separate from the standard local presentation. Install its prerel
 The entry point is:
 
 ```powershell
-.\.venv\Scripts\python.exe -B kickoffdemos\03_hosted_tools.py --serve
+.\.venv\Scripts\python.exe -B kickoffdemos\04_hosted_tools.py --serve
 ```
 
 Use `--serve` only in a configured Foundry Hosted Agent environment that supplies the platform-managed Responses endpoint and identity. Installing the additional package alone does not provision or deploy a Hosted Agent. For the normal demo, use local mode.
 
-## 10. Run Demo 4: observability and evaluation
+## 11. Run Demo 5: observability and evaluation
 
 Open or configure the intended telemetry destination first, then run:
 
 ```powershell
-.\.venv\Scripts\python.exe -B kickoffdemos\04_observability.py
+.\.venv\Scripts\python.exe -B kickoffdemos\05_observability.py
 ```
 
 The terminal reports:
@@ -296,7 +331,7 @@ When a valid Trace ID is shown, use it to find the run in the configured destina
 Content capture is disabled by default. The demo records operational attributes without exporting prompt and completion bodies. For approved, non-sensitive test data only, content capture can be enabled explicitly:
 
 ```powershell
-.\.venv\Scripts\python.exe -B kickoffdemos\04_observability.py --include-content
+.\.venv\Scripts\python.exe -B kickoffdemos\05_observability.py --include-content
 ```
 
 Do not use `--include-content` with PHI, credentials, customer data, or an unapproved telemetry destination.
@@ -305,10 +340,10 @@ Do not use `--include-content` with PHI, credentials, customer data, or an unapp
 
 - Press Ctrl+C to stop a local demo.
 - Demo 1 creates a persistent prompt-agent version named `partner-solution-assessment-intro` on each run.
-- Demos 3 and 4 do not create persistent application data in this repository.
+- Demos 4 and 5 do not create persistent application data in this repository.
 - All agents set `default_options={"store": False}` so their Responses API calls do not store model responses.
 - Foundry IQ ingestion creates persistent Search resources and documents. Rerunning ingestion updates them; it does not duplicate the three fixed document IDs.
-- Every Demo 2 run creates a new timestamped proposal blob. The container and blobs persist.
+- Every full Demo 2 or Demo 3 run creates a new timestamped proposal blob. The container and blobs persist.
 - This repository has no cleanup command. Delete unneeded Demo 1 agent versions and Demo 2 Search and Blob resources through your normal Azure resource-management process only when they are no longer shared or needed.
 
 ## Troubleshooting
@@ -328,10 +363,11 @@ Do not use `--include-content` with PHI, credentials, customer data, or an unapp
 | Demo 2 cannot create a user-delegation key | Move the Blob role assignment to storage-account scope, or use an existing approved public container. |
 | The proposal URL has a query string | The container is private, so the URL contains a one-hour read-only SAS. This is expected. |
 | Demo 2 proposal wording differs | Model output is nondeterministic. Open the file and validate its sections, citations, recommendations, and clinician approval boundary. |
-| Demo 3 omits a tool message | Rerun once. The visible CRM, knowledge, and cost tool messages are the success criterion. |
+| Demo 3 does not complete its todo list | Rerun with `--verbose`; confirm retrieval completed before publication. |
+| Demo 4 omits a tool message | Rerun once. The visible CRM, knowledge, and cost tool messages are the success criterion. |
 | `--serve` cannot import the hosting package | Install `requirements-hosted.txt`; also verify that the process is running in a configured Hosted Agent environment. |
-| Demo 4 reports `local spans only` | Open the Foundry Toolkit trace viewer before rerunning, or configure Application Insights or an OTLP endpoint in `.env`. |
-| Demo 4 score is below 100% | Review the reported missing criteria. This is a visible evaluation result, not a script failure. |
+| Demo 5 reports `local spans only` | Open the Foundry Toolkit trace viewer before rerunning, or configure Application Insights or an OTLP endpoint in `.env`. |
+| Demo 5 score is below 100% | Review the reported missing criteria. This is a visible evaluation result, not a script failure. |
 | Trace ID is unavailable | No active exporter produced a valid trace context. Configure the destination, restart the script, and use the new Trace ID. |
 
 ## Final pre-demo checklist
@@ -346,7 +382,8 @@ Do not use `--include-content` with PHI, credentials, customer data, or an unapp
 - [ ] Foundry IQ dry run validates three opportunities and three proposals.
 - [ ] Live ingestion accepts three documents in each index.
 - [ ] Demo 2 prints one output path or URL and the proposal opens.
-- [ ] Demo 3 calls CRM, knowledge, and cost tools.
-- [ ] Demo 4 has the intended telemetry destination.
+- [ ] Demo 3 completes its Harness todo list and publishes a cited proposal.
+- [ ] Demo 4 calls CRM, knowledge, and cost tools.
+- [ ] Demo 5 has the intended telemetry destination.
 - [ ] Prompt and completion content capture remains disabled.
 - [ ] No credentials, `.env` values, or sensitive traces are visible to the audience.

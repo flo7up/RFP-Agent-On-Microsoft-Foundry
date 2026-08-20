@@ -1,6 +1,6 @@
 # Presenter Guide: Opportunity Assessment Agent
 
-This runbook presents the four demo files as one story for Microsoft partners and system integrators. The complete presentation takes about 20 minutes.
+This runbook presents five numbered demos as one story for Microsoft partners and system integrators. The complete presentation takes about 22 minutes.
 
 ## The story
 
@@ -8,12 +8,13 @@ Your company is a Microsoft systems integrator responding to a healthcare opport
 
 Contoso wants to reduce prior-authorization preparation from about two hours to fifteen minutes. Staff must use approved clinical records, protected health information must remain inside the tenant, and a clinician must approve every submission.
 
-The account team needs to answer four questions:
+The account team needs to answer five questions:
 
 1. Can an agent turn the opportunity into a useful first assessment?
 2. Can the assessment reuse the firm's delivery experience instead of relying only on model knowledge?
-3. Can the agent work with approved enterprise systems and explicit tool boundaries?
-4. Can the resulting solution be traced and evaluated in operation?
+3. When should orchestration be model-directed instead of encoded as a fixed workflow?
+4. Can the agent work with approved enterprise systems and explicit tool boundaries?
+5. Can the resulting solution be traced and evaluated in operation?
 
 Each demo answers one question while retaining the same customer, workflow, constraints, and human-accountability boundary.
 
@@ -30,15 +31,15 @@ Keep these facts consistent throughout the presentation:
 | Staff use approved clinical records containing PHI | Initial opportunity |
 | Patient data remains inside the tenant | Initial opportunity |
 | A clinician approves every submission | Initial opportunity |
-| Opportunity ID is `OPP-1042` | Approved CRM record retrieved in Demo 3 |
-| Volume is 12,000 requests per month | Approved CRM record retrieved in Demo 3 |
+| Opportunity ID is `OPP-1042` | Approved CRM record retrieved in Demo 4 |
+| Volume is 12,000 requests per month | Approved CRM record retrieved in Demo 4 |
 | Historical projects and outcomes are synthetic samples | Foundry IQ corpus used in Demo 2 |
 
-Do not mention `OPP-1042` or 12,000 requests as known facts before Demo 3. Their appearance demonstrates that tool access can add approved enterprise context.
+Do not mention `OPP-1042` or 12,000 requests as known facts before Demo 4. Their appearance demonstrates that tool access can add approved enterprise context.
 
 ## Core message
 
-Use this sentence to connect the four demos:
+Use this sentence to connect the five demos:
 
 > We start with a useful agent, ground it in organizational experience, connect it to governed enterprise tools, and make its operation observable.
 
@@ -49,8 +50,9 @@ Use this sentence to connect the four demos:
 | Opening | 1 minute | Establish the customer opportunity |
 | Demo 1 | 3 minutes | Show a useful model-based assessment |
 | Demo 2 | 90 seconds | Create a grounded proposal artifact and open its URL |
-| Demo 3 | 4 minutes | Add approved enterprise tools and hosting boundary |
-| Demo 4 | 3 minutes | Trace and evaluate the agent run |
+| Demo 3 | 2 minutes | Compare fixed and model-directed orchestration |
+| Demo 4 | 4 minutes | Add approved enterprise tools and hosting boundary |
+| Demo 5 | 3 minutes | Trace and evaluate the agent run |
 | Close | 1 minute | Summarize the enterprise progression |
 
 ## Before the presentation
@@ -76,13 +78,13 @@ Populate `.env` with:
 - `AZURE_OPENAI_EMBEDDING_DEPLOYMENT`
 - `AZURE_OPENAI_EMBEDDING_MODEL`
 - Optional `AZURE_STORAGE_ACCOUNT_URL`
-- Optional telemetry settings for Demo 4
+- Optional telemetry settings for Demo 5
 
 Never display `.env` during the presentation.
 
 ### 2. Validate and ingest project memory
 
-The ingestion script is setup for Demo 2, not one of the four numbered demos.
+The ingestion script is setup for Demo 2, not one of the five numbered demos.
 
 ```powershell
 python -B kickoffdemos\ingest_foundry_iq.py --dry-run
@@ -95,7 +97,7 @@ Confirm that the live command creates or updates both indexes and accepts three 
 
 The command is idempotent. It updates the same index, knowledge source, knowledge base, and three document IDs.
 
-### 3. Prepare tracing for Demo 4
+### 3. Prepare tracing for Demo 5
 
 Choose one telemetry destination before the presentation:
 
@@ -105,16 +107,17 @@ Choose one telemetry destination before the presentation:
 
 Do not use `--include-content` in a customer setting. The included scenario is synthetic, but leaving content capture off demonstrates the safer production default.
 
-### 4. Preflight all four commands
+### 4. Preflight all five commands
 
-Run the offline regression suite, then run all four demos once before the audience arrives:
+Run the offline regression suite, then run all five demos once before the audience arrives:
 
 ```powershell
 python -B -m unittest discover -s tests -v
 python -B kickoffdemos\01_intro.py
 python -B kickoffdemos\02_patterns.py
-python -B kickoffdemos\03_hosted_tools.py
-python -B kickoffdemos\04_observability.py
+python -B kickoffdemos\03_harness.py
+python -B kickoffdemos\04_hosted_tools.py
+python -B kickoffdemos\05_observability.py
 ```
 
 Keep one terminal at the repository root, increase its font size, and clear previous output before starting.
@@ -123,7 +126,7 @@ Keep one terminal at the repository root, increase its font size, and clear prev
 
 Say:
 
-> Contoso Health has a concrete operational problem. Prior-authorization preparation takes about two hours, and the target is fifteen minutes. The workflow uses protected clinical data, data must remain in the tenant, and every submission needs clinician approval. We will build confidence in the solution through four increasingly enterprise-ready capabilities.
+> Contoso Health has a concrete operational problem. Prior-authorization preparation takes about two hours, and the target is fifteen minutes. The workflow uses protected clinical data, data must remain in the tenant, and every submission needs clinician approval. We will build confidence in the solution through five increasingly enterprise-ready capabilities.
 
 Do not show architecture slides first. Start with the opportunity and let each demo earn the next layer of architecture.
 
@@ -210,18 +213,57 @@ For an existing public container, the output is a direct blob URL. For a private
 
 Say:
 
-> We now have an evidence-grounded proposal delivered as a usable artifact. Delivery still requires current enterprise facts, governed actions, and cost context. Those should enter through explicit tools.
+> We now have an evidence-grounded proposal delivered as a usable artifact through a fixed workflow. Before adding more systems, compare that deterministic graph with an agent that can plan the same job dynamically.
 
-## Demo 3: Connect approved enterprise tools
+## Demo 3: Compare Harness orchestration
 
-**File:** `kickoffdemos/03_hosted_tools.py`
+**File:** `kickoffdemos/03_harness.py`
+
+**Question answered:** When should orchestration be model-directed instead of encoded as a fixed workflow?
+
+### Run
+
+```powershell
+python -B kickoffdemos\03_harness.py --playground
+```
+
+The pixel-art Harness Office opens at `http://127.0.0.1:8090`. Use `--playground-port <port>` if needed. The
+terminal-only comparison remains available with `python -B kickoffdemos\03_harness.py --verbose`.
+
+### Say before running
+
+> Demo 2 encoded retrieval, drafting, citation assembly, and publication as a fixed graph. Demo 3 gives the Harness bounded tools for the same job and lets the model manage its todo list and execution mode.
+
+### Point out in the output
+
+- The Harness creates and completes its own todo list.
+- Plan length is chosen at runtime through `TodoProvider`; new or obsolete work can be added or removed.
+- The character moves only when real todo, retrieval, drafting, or publication events occur.
+- The journey preserves returns to earlier workstations for refined searches and validation retries.
+- Every run opens at the door: a visitor rings the doorbell and hands over the opportunity brief.
+- Idle is visible too: the character sleeps between runs, then wakes and stretches on the first event.
+- Speech bubbles summarize observable actions and results, not private chain-of-thought.
+- Retrieval and publication remain bounded by application tools.
+- `default_options={"store": False}` remains enforced.
+- The resulting proposal still requires resolvable citations and a Sources section.
+- `03_harness_simple.py` is the minimal one-tool hello-world companion when the full comparison is more detail than the audience needs.
+
+### Transition
+
+Say:
+
+> Harness makes orchestration adaptive, while bounded tools still define what the agent can retrieve or publish. Next, we apply that same tool boundary to current enterprise facts and hosting.
+
+## Demo 4: Connect approved enterprise tools
+
+**File:** `kickoffdemos/04_hosted_tools.py`
 
 **Question answered:** Can the agent retrieve approved business context through bounded tools?
 
 ### Run
 
 ```powershell
-python -B kickoffdemos\03_hosted_tools.py
+python -B kickoffdemos\04_hosted_tools.py
 ```
 
 ### Say before running
@@ -268,16 +310,16 @@ Say:
 
 > We have moved from reasoning to evidence and then to governed action. The final enterprise question is operational: can we inspect what happened and measure whether the response met our expectations?
 
-## Demo 4: Observe and evaluate the run
+## Demo 5: Observe and evaluate the run
 
-**File:** `kickoffdemos/04_observability.py`
+**File:** `kickoffdemos/05_observability.py`
 
 **Question answered:** Can operators trace the agent and attach evaluation evidence to the same run?
 
 ### Run
 
 ```powershell
-python -B kickoffdemos\04_observability.py
+python -B kickoffdemos\05_observability.py
 ```
 
 ### Say before running
@@ -337,12 +379,13 @@ Say:
 
 > The progression is the product story. Agent Framework gives us a useful agent boundary. Foundry IQ grounds the offer in organizational experience. Tools add approved enterprise facts and controlled actions. Tracing and evaluation make the result operable. Tenant containment remains an explicit architecture requirement, and clinicians remain accountable for every submission.
 
-Finish with four short takeaways:
+Finish with five short takeaways:
 
 1. Start with a narrow, useful agent.
 2. Ground historical claims in governed organizational evidence.
-3. Put enterprise access behind explicit tools and identities.
-4. Attach observability and evaluation before scaling the workflow.
+3. Choose fixed or model-directed orchestration based on the required control boundary.
+4. Put enterprise access behind explicit tools and identities.
+5. Attach observability and evaluation before scaling the workflow.
 
 ## Claims to avoid
 
@@ -365,8 +408,8 @@ Do not make these claims during the presentation:
 | Ingestion reports missing Search connection | Set `FOUNDRY_IQ_SEARCH_CONNECTION_NAME` or a direct Search endpoint |
 | Demo 2 returns no evidence | Rerun `ingest_foundry_iq.py`, confirm three accepted documents, then retry |
 | A model response varies in wording | Anchor the narration on headings, citations, tool calls, and controls rather than exact prose |
-| Demo 3 omits a tool | Rerun once; use the visible tool messages as the success criterion |
-| Demo 4 reports local spans only | Open the Foundry Toolkit trace viewer before rerunning or configure an exporter |
+| Demo 4 omits a tool | Rerun once; use the visible tool messages as the success criterion |
+| Demo 5 reports local spans only | Open the Foundry Toolkit trace viewer before rerunning or configure an exporter |
 | Coverage score is below 100% | Show the missing criteria and explain how evaluation reveals a release gap |
 | Network or service latency interrupts the flow | Use screenshots or saved non-sensitive output from a successful preflight; never expose `.env` |
 
@@ -380,8 +423,9 @@ Before going on stage, confirm:
 - [ ] `.env` is populated and hidden from the audience.
 - [ ] Ingestion accepts all three documents.
 - [ ] Demo 2 retrieves `[0]`, `[1]`, and `[2]`.
-- [ ] Demo 3 invokes CRM, guidance, and cost tools.
-- [ ] A telemetry destination is ready for Demo 4.
+- [ ] Demo 3 completes its Harness todo list and publishes a cited proposal.
+- [ ] Demo 4 invokes CRM, guidance, and cost tools.
+- [ ] A telemetry destination is ready for Demo 5.
 - [ ] Content capture remains disabled.
 - [ ] Terminal font size and window layout are readable.
 - [ ] Backup screenshots contain no secrets or sensitive content.

@@ -21,7 +21,7 @@
         "debugpy",
         "--listen",
         "127.0.0.1:5679",
-        "kickoffdemos/03_patterns.py"
+        "kickoffdemos/hosted_proposal_agent.py"
       ],
       "isBackground": true,
       "options": {

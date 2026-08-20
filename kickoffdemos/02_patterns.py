@@ -36,14 +36,17 @@ import json
 import os
 import re
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from typing_extensions import Never
 
-from agent_framework import Agent
+from agent_framework import Agent, WorkflowBuilder, WorkflowContext, executor
 from agent_framework.foundry import FoundryChatClient
 from azure.ai.projects import AIProjectClient
+from pydantic import BaseModel, ConfigDict, Field
 
 try:
     from agent_framework.devui import serve
@@ -67,6 +70,7 @@ from azure.storage.blob import (
     generate_blob_sas,
 )
 from dotenv import load_dotenv
+from opentelemetry import trace
 
 
 SEARCH_API_VERSION = "2026-05-01-preview"
@@ -92,6 +96,87 @@ SECTION_FIELDS = (
     ("lessons_learned", "Lessons Learned"),
     ("future_expansion_opportunities", "Future Expansion Opportunities"),
 )
+
+ProgressCallback = Callable[[str], None]
+
+
+def report_progress(progress: ProgressCallback | None, message: str) -> None:
+    if progress:
+        progress(message)
+
+
+def trace_workflow_output(
+    executor_id: str,
+    summary: str,
+    *,
+    output_data: str | None = None,
+    **details: Any,
+) -> None:
+    span = trace.get_current_span()
+    if not span.is_recording():
+        return
+
+    attributes = {
+        "demo.workflow.executor_id": executor_id,
+        "demo.workflow.output.summary": summary,
+        **{f"demo.workflow.output.{name}": value for name, value in details.items()},
+    }
+    for name, value in attributes.items():
+        span.set_attribute(name, value)
+    span.add_event("demo.workflow.output", attributes=attributes)
+
+    tracer = trace.get_tracer("opportunity-assessment-demo")
+    with tracer.start_as_current_span(f"workflow.output {executor_id}") as output_span:
+        for name, value in attributes.items():
+            output_span.set_attribute(name, value)
+        if output_data is not None:
+            output_span.set_attribute("demo.workflow.output.content_captured", True)
+            output_span.set_attribute("demo.workflow.output.data", output_data)
+        output_span.add_event("demo.workflow.output", attributes=attributes)
+
+
+class OpportunityWorkflowInput(BaseModel):
+    """The new customer opportunity or call-for-offer that the workflow must answer."""
+
+    model_config = ConfigDict(title="Customer Opportunity / Call for Offer")
+
+    opportunity_text: str = Field(
+        ...,
+        title="Customer Opportunity / Call-for-Offer Text",
+        description=(
+            "Paste the complete customer request, call for offer, RFP excerpt, or opportunity brief. "
+            "Include the business goal, current process, constraints, required controls, target outcomes, "
+            "and mandatory human approvals."
+        ),
+        min_length=1,
+        examples=[
+            "A healthcare provider wants to reduce prior-authorization preparation time while keeping "
+            "patient data inside its tenant and requiring clinician approval before submission."
+        ],
+    )
+
+
+@dataclass(frozen=True)
+class OpportunityEvidence:
+    opportunity: str
+    grounding_text: str
+    references: list[dict[str, Any]]
+    proposal_filter: str
+
+
+@dataclass(frozen=True)
+class ProposalEvidence:
+    opportunity: str
+    opportunity_text: str
+    opportunity_references: list[dict[str, Any]]
+    proposal_text: str
+    proposal_references: list[dict[str, Any]]
+
+
+@dataclass(frozen=True)
+class ProposalDraft:
+    proposal: str
+    references: list[dict[str, Any]]
 
 
 def required_setting(*names: str) -> str:
@@ -270,9 +355,18 @@ def _opportunity_filter(references: list[dict[str, Any]]) -> str:
     )
 
 
-def retrieve_project_memory(credential: AzureCliCredential, opportunity: str) -> str:
+def retrieve_opportunity_evidence(
+    credential: AzureCliCredential,
+    opportunity: str,
+    *,
+    progress: ProgressCallback | None = None,
+) -> OpportunityEvidence:
     opportunity_source_name, opportunity_base_name = resource_names()
-    proposal_source_name, proposal_base_name = proposal_resource_names()
+    report_progress(
+        progress,
+        f"Stage 1/4: querying opportunity knowledge base '{opportunity_base_name}' "
+        "with low-reasoning agentic retrieval.",
+    )
     endpoint, search_credential = search_access(credential)
     requested_sections = ", ".join(heading for _, heading in SECTION_FIELDS)
     opportunity_query = (
@@ -280,12 +374,6 @@ def retrieve_project_memory(credential: AzureCliCredential, opportunity: str) ->
         "workflow, data sources, human approval boundary, security and governance requirements, "
         "implementation approach, and measurable outcomes. Return evidence for these sections: "
         f"{requested_sections}. New opportunity: {opportunity}"
-    )
-    proposal_query = (
-        "From the retrieved opportunities, identify the historically most relevant proposal or solution "
-        "documents that match this opportunity and include architecture, implementation, governance, "
-        "and success patterns. Focus on solution recommendations and proposal evidence. New opportunity: "
-        f"{opportunity}"
     )
 
     opportunity_client = KnowledgeBaseRetrievalClient(
@@ -330,6 +418,41 @@ def retrieve_project_memory(credential: AzureCliCredential, opportunity: str) ->
         first_reference_id=0,
     )
     proposal_filter = _opportunity_filter(opportunity_references)
+    opportunity_titles = [
+        str(first_value(first_value(reference, "source_data", "sourceData", default={}) or {}, "title", default="Untitled"))
+        for reference in opportunity_references
+    ]
+    report_progress(
+        progress,
+        f"Stage 1/4 complete: matched {len(opportunity_references)} opportunities: "
+        + "; ".join(opportunity_titles),
+    )
+    return OpportunityEvidence(
+        opportunity=opportunity,
+        grounding_text=opportunity_text,
+        references=opportunity_references,
+        proposal_filter=proposal_filter,
+    )
+
+
+def retrieve_linked_proposal_evidence(
+    credential: AzureCliCredential,
+    evidence: OpportunityEvidence,
+    *,
+    progress: ProgressCallback | None = None,
+) -> ProposalEvidence:
+    proposal_source_name, proposal_base_name = proposal_resource_names()
+    report_progress(
+        progress,
+        f"Stage 2/4: querying linked proposals in '{proposal_base_name}' with an opportunity_id filter.",
+    )
+    endpoint, search_credential = search_access(credential)
+    proposal_query = (
+        "From the retrieved opportunities, identify the historically most relevant proposal or solution "
+        "documents that match this opportunity and include architecture, implementation, governance, "
+        "and success patterns. Focus on solution recommendations and proposal evidence. New opportunity: "
+        f"{evidence.opportunity}"
+    )
 
     proposal_client = KnowledgeBaseRetrievalClient(
         endpoint=endpoint,
@@ -356,7 +479,7 @@ def retrieve_project_memory(credential: AzureCliCredential, opportunity: str) ->
                         include_references=True,
                         include_reference_source_data=True,
                         always_query_source=True,
-                        filter_add_on=proposal_filter,
+                        filter_add_on=evidence.proposal_filter,
                     )
                 ],
             )
@@ -371,15 +494,51 @@ def retrieve_project_memory(credential: AzureCliCredential, opportunity: str) ->
     proposal_text, proposal_references = _remap_references(
         proposal_text,
         proposal_references,
-        first_reference_id=len(opportunity_references),
+        first_reference_id=len(evidence.references),
+    )
+    proposal_titles = [
+        str(first_value(first_value(reference, "source_data", "sourceData", default={}) or {}, "title", default="Untitled"))
+        for reference in proposal_references
+    ]
+    report_progress(
+        progress,
+        f"Stage 2/4 complete: retrieved {len(proposal_references)} linked proposals: "
+        + "; ".join(proposal_titles),
+    )
+    return ProposalEvidence(
+        opportunity=evidence.opportunity,
+        opportunity_text=evidence.grounding_text,
+        opportunity_references=evidence.references,
+        proposal_text=proposal_text,
+        proposal_references=proposal_references,
     )
 
-    citation_catalog = _citation_catalog(opportunity_references + proposal_references)
+
+def retrieve_project_memory(
+    credential: AzureCliCredential,
+    opportunity: str,
+    *,
+    progress: ProgressCallback | None = None,
+) -> str:
+    opportunity_evidence = retrieve_opportunity_evidence(
+        credential,
+        opportunity,
+        progress=progress,
+    )
+    proposal_evidence = retrieve_linked_proposal_evidence(
+        credential,
+        opportunity_evidence,
+        progress=progress,
+    )
+
+    citation_catalog = _citation_catalog(
+        proposal_evidence.opportunity_references + proposal_evidence.proposal_references
+    )
     return (
         "Relevant opportunity context:\n"
-        f"{opportunity_text}\n\n"
+        f"{proposal_evidence.opportunity_text}\n\n"
         "Relevant proposal evidence:\n"
-        f"{proposal_text}\n\n"
+        f"{proposal_evidence.proposal_text}\n\n"
         "Structured citation catalog:\n"
         + "\n".join(citation_catalog)
     )
@@ -498,6 +657,12 @@ def upload_proposal(
                 overwrite=False,
                 content_settings=ContentSettings(content_type="text/markdown; charset=utf-8"),
             )
+            trace_workflow_output(
+                "draft_file",
+                f"Saved draft file {file_name} to Azure Blob Storage.",
+                file_name=file_name,
+                storage_type="azure_blob",
+            )
             return blob_client.url if is_public else f"{blob_client.url}?{sas_token}"
     except Exception:
         repo_root = Path(__file__).resolve().parents[1]
@@ -505,14 +670,139 @@ def upload_proposal(
         output_dir.mkdir(parents=True, exist_ok=True)
         output_path = output_dir / file_name
         output_path.write_text(proposal, encoding="utf-8")
+        trace_workflow_output(
+            "draft_file",
+            f"Saved draft file {file_name} to the local outputs folder.",
+            file_name=file_name,
+            storage_type="local",
+        )
         return output_path.relative_to(repo_root).as_posix()
 
 
-async def create_proposal(opportunity: str, credential: AzureCliCredential) -> str:
-    agent = create_assessment_agent(credential)
-    grounding = await asyncio.to_thread(retrieve_project_memory, credential, opportunity)
-    response = await agent.run(
-        f"""Create a polished draft SI proposal in Markdown for the new opportunity. Use these exact
+async def create_proposal(
+    opportunity: str,
+    credential: AzureCliCredential,
+    *,
+    progress: ProgressCallback | None = None,
+) -> str:
+    proposal, _ = await run_proposal_workflow(opportunity, credential, progress=progress)
+    return proposal
+
+
+def create_proposal_workflow(
+    credential: AzureCliCredential,
+    *,
+    include_trace_content: bool = False,
+    persist_draft: bool = False,
+) -> Any:
+    assessment_agent = create_assessment_agent(credential)
+
+    @executor(
+        id="retrieve_opportunities",
+        input=OpportunityWorkflowInput,
+        output=OpportunityEvidence,
+    )
+    async def retrieve_opportunities(
+        workflow_input: OpportunityWorkflowInput,
+        ctx: WorkflowContext[OpportunityEvidence],
+    ) -> None:
+        evidence = await asyncio.to_thread(
+            retrieve_opportunity_evidence,
+            credential,
+            workflow_input.opportunity_text,
+        )
+        titles = [
+            str(
+                first_value(
+                    first_value(reference, "source_data", "sourceData", default={}) or {},
+                    "title",
+                    default="Untitled",
+                )
+            )
+            for reference in evidence.references
+        ]
+        trace_workflow_output(
+            "retrieve_opportunities",
+            f"Matched {len(titles)} historical opportunities: " + "; ".join(titles),
+            output_data=json.dumps(
+                {
+                    "grounding_text": evidence.grounding_text,
+                    "references": evidence.references,
+                    "proposal_filter": evidence.proposal_filter,
+                },
+                indent=2,
+                ensure_ascii=True,
+            )
+            if include_trace_content
+            else None,
+            reference_count=len(titles),
+            reference_titles=titles,
+            proposal_filter=evidence.proposal_filter,
+        )
+        await ctx.send_message(evidence)
+
+    @executor(
+        id="retrieve_linked_proposals",
+        input=OpportunityEvidence,
+        output=ProposalEvidence,
+    )
+    async def retrieve_linked_proposals(
+        evidence: OpportunityEvidence,
+        ctx: WorkflowContext[ProposalEvidence],
+    ) -> None:
+        proposal_evidence = await asyncio.to_thread(
+            retrieve_linked_proposal_evidence,
+            credential,
+            evidence,
+        )
+        titles = [
+            str(
+                first_value(
+                    first_value(reference, "source_data", "sourceData", default={}) or {},
+                    "title",
+                    default="Untitled",
+                )
+            )
+            for reference in proposal_evidence.proposal_references
+        ]
+        trace_workflow_output(
+            "retrieve_linked_proposals",
+            f"Retrieved {len(titles)} linked proposals: " + "; ".join(titles),
+            output_data=json.dumps(
+                {
+                    "proposal_text": proposal_evidence.proposal_text,
+                    "proposal_references": proposal_evidence.proposal_references,
+                },
+                indent=2,
+                ensure_ascii=True,
+            )
+            if include_trace_content
+            else None,
+            reference_count=len(titles),
+            reference_titles=titles,
+        )
+        await ctx.send_message(proposal_evidence)
+
+    @executor(
+        id="draft_proposal",
+        input=ProposalEvidence,
+        output=ProposalDraft,
+    )
+    async def draft_proposal(
+        evidence: ProposalEvidence,
+        ctx: WorkflowContext[ProposalDraft],
+    ) -> None:
+        references = evidence.opportunity_references + evidence.proposal_references
+        grounding = (
+            "Relevant opportunity context:\n"
+            f"{evidence.opportunity_text}\n\n"
+            "Relevant proposal evidence:\n"
+            f"{evidence.proposal_text}\n\n"
+            "Structured citation catalog:\n"
+            + "\n".join(_citation_catalog(references))
+        )
+        response = await assessment_agent.run(
+            f"""Create a polished draft SI proposal in Markdown for the new opportunity. Use these exact
 headings: Executive Summary, Customer Situation, Recommended Architecture, Microsoft Services Used,
 Implementation Timeline, Security Considerations, Governance Controls, Success Metrics, Lessons
 Applied, and Future Expansion Opportunities. Reuse supported patterns from the synthetic historical
@@ -520,55 +810,210 @@ projects with citations. Label new choices as recommendations, retain clinician 
 present historical metrics as guaranteed outcomes. Return only the proposal content.
 
 New opportunity:
-{opportunity}
+{evidence.opportunity}
 
 Foundry IQ evidence:
-{grounding}""",
+{grounding}
+
+Formatting guidelines:
+- Start every required section with a level-two Markdown heading (`##`); do not add another title.
+- Keep paragraphs concise. Use numbered steps for the architecture and bullets for controls, services,
+  metrics, lessons, and expansion opportunities.
+- Present the implementation timeline as a Markdown table with Phase, Timing, and Deliverables columns.
+- Place citations immediately after the historical claim they support.
+- Do not use HTML, fenced code blocks, or add a Sources section; the workflow appends Sources."""
+        )
+        proposal = (
+            "# Draft Opportunity Proposal\n\n"
+            "> Synthetic demonstration content. Review before use.\n\n"
+            f"{response.text.strip()}\n"
+        )
+        citation_count = len(set(re.findall(r"\[(\d+)\]", proposal)))
+        trace_workflow_output(
+            "draft_proposal",
+            f"Generated a {len(proposal):,}-character draft using {citation_count} references.",
+            output_data=proposal if include_trace_content else None,
+            character_count=len(proposal),
+            citation_count=citation_count,
+        )
+        await ctx.send_message(ProposalDraft(proposal=proposal, references=references))
+
+    @executor(
+        id="assemble_sources",
+        input=ProposalDraft,
+        workflow_output=str,
     )
-    proposal = (
-        "# Draft Opportunity Proposal\n\n"
-        "> Synthetic demonstration content. Review before use.\n\n"
-        f"{response.text.strip()}\n"
+    async def assemble_sources(
+        draft: ProposalDraft,
+        ctx: WorkflowContext[Never, str],
+    ) -> None:
+        grounding = "Structured citation catalog:\n" + "\n".join(_citation_catalog(draft.references))
+        proposal = append_sources_section(draft.proposal, f"\n{grounding}")
+        source_count = len(re.findall(r"(?m)^- \[\d+\]", proposal))
+        trace_workflow_output(
+            "assemble_sources",
+            f"Assembled the final proposal with {source_count} Sources entries.",
+            output_data=proposal if include_trace_content else None,
+            character_count=len(proposal),
+            source_count=source_count,
+        )
+        if persist_draft:
+            upload_proposal(credential, proposal)
+        await ctx.yield_output(proposal)
+
+    return (
+        WorkflowBuilder(
+            name="opportunity-proposal-workflow",
+            description=(
+                "Match historical opportunities, retrieve linked proposals, draft a cited response, "
+                "and assemble Sources."
+            ),
+            start_executor=retrieve_opportunities,
+            output_from=[assemble_sources],
+        )
+        .add_edge(retrieve_opportunities, retrieve_linked_proposals)
+        .add_edge(retrieve_linked_proposals, draft_proposal)
+        .add_edge(draft_proposal, assemble_sources)
+        .build()
     )
-    proposal = append_sources_section(proposal, grounding)
-    return proposal
 
 
-async def create_proposal_url(opportunity: str, credential: AzureCliCredential) -> str:
-    proposal = await create_proposal(opportunity, credential)
+async def run_proposal_workflow(
+    opportunity: str,
+    credential: AzureCliCredential,
+    *,
+    progress: ProgressCallback | None = None,
+) -> tuple[str, list[str]]:
+    workflow = create_proposal_workflow(credential)
+    workflow_input = OpportunityWorkflowInput(opportunity_text=opportunity)
+    stream = workflow.run(workflow_input, stream=True)
+    workflow_trace: list[str] = []
+    async for event in stream:
+        if event.type == "executor_completed" and event.executor_id != "assemble_sources":
+            message = workflow_stage_message(event.executor_id, event.data)
+            if message:
+                workflow_trace.append(message)
+                report_progress(progress, message)
+    result = await stream.get_final_response()
+    outputs = result.get_outputs()
+    if len(outputs) != 1 or not isinstance(outputs[0], str):
+        raise RuntimeError("The proposal workflow did not produce exactly one Markdown output.")
+    workflow_trace.append("Stage 4/4 complete: resolved citations and assembled Sources.")
+    report_progress(progress, workflow_trace[-1])
+    return outputs[0], workflow_trace
+
+
+def workflow_stage_message(executor_id: str | None, completion_data: Any) -> str | None:
+    sent_value = completion_data[0] if isinstance(completion_data, list) and completion_data else None
+    if executor_id == "retrieve_opportunities" and isinstance(sent_value, OpportunityEvidence):
+        titles = [
+            str(
+                first_value(
+                    first_value(reference, "source_data", "sourceData", default={}) or {},
+                    "title",
+                    default="Untitled",
+                )
+            )
+            for reference in sent_value.references
+        ]
+        return (
+            f"Stage 1/4 complete: matched {len(sent_value.references)} opportunities: "
+            + "; ".join(titles)
+        )
+    if executor_id == "retrieve_linked_proposals" and isinstance(sent_value, ProposalEvidence):
+        titles = [
+            str(
+                first_value(
+                    first_value(reference, "source_data", "sourceData", default={}) or {},
+                    "title",
+                    default="Untitled",
+                )
+            )
+            for reference in sent_value.proposal_references
+        ]
+        return (
+            f"Stage 2/4 complete: retrieved {len(sent_value.proposal_references)} linked proposals: "
+            + "; ".join(titles)
+        )
+    if executor_id == "draft_proposal" and isinstance(sent_value, ProposalDraft):
+        return "Stage 3/4 complete: generated the cited proposal draft."
+    return None
+
+
+async def create_proposal_url(
+    opportunity: str,
+    credential: AzureCliCredential,
+    *,
+    progress: ProgressCallback | None = None,
+) -> str:
+    proposal = await create_proposal(opportunity, credential, progress=progress)
     return upload_proposal(credential, proposal)
 
 
-async def launch_devui() -> None:
+async def create_devui_proposal(opportunity: str, credential: AzureCliCredential) -> str:
+    proposal, workflow_trace = await run_proposal_workflow(opportunity, credential)
+    trace_text = "\n".join(f"- {event}" for event in workflow_trace)
+    return f"# Workflow Trace\n\n{trace_text}\n\n---\n\n{proposal}"
+
+
+def launch_devui(port: int = 8080) -> None:
     if serve is None:
         raise RuntimeError("Install agent-framework-devui to launch the DevUI browser experience.")
 
     credential = AzureCliCredential()
     try:
-        serve(entities=[create_assessment_agent(credential)], auto_open=True)
+        serve(
+            entities=[
+                create_proposal_workflow(
+                    credential,
+                    include_trace_content=True,
+                    persist_draft=True,
+                )
+            ],
+            host="127.0.0.1",
+            port=port,
+            auto_open=True,
+            auth_enabled=False,
+            instrumentation_enabled=True,
+        )
     finally:
         credential.close()
 
 
-async def main() -> None:
+async def run_cli(opportunity: str, *, verbose: bool = False) -> None:
+    progress = (
+        lambda message: print(f"[workflow] {message}", file=sys.stderr, flush=True)
+        if verbose
+        else None
+    )
+    credential = AzureCliCredential()
+    try:
+        print(await create_proposal_url(opportunity, credential, progress=progress))
+    finally:
+        credential.close()
+
+
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("opportunity", nargs="?", default=DEFAULT_OPPORTUNITY)
-    parser.add_argument("--devui", action="store_true", help="Launch the Agent Framework DevUI for the assessment agent.")
+    parser.add_argument(
+        "--devui",
+        action="store_true",
+        help="Launch DevUI and include synthetic workflow outputs in local traces.",
+    )
+    parser.add_argument("--devui-port", type=int, default=8080, help="Loopback port for DevUI (default: 8080).")
+    parser.add_argument("--verbose", action="store_true", help="Print each retrieval and generation stage to stderr.")
     args = parser.parse_args()
 
     if args.devui:
-        await launch_devui()
+        launch_devui(args.devui_port)
         return
 
-    credential = AzureCliCredential()
-    try:
-        print(await create_proposal_url(args.opportunity, credential))
-    finally:
-        credential.close()
+    asyncio.run(run_cli(args.opportunity, verbose=args.verbose))
 
 
 if __name__ == "__main__":
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(errors="replace")
     load_dotenv()
-    asyncio.run(main())
+    main()

@@ -31,17 +31,22 @@ flowchart LR
     PKB --> D2
     D2 --> B[Timestamped Markdown proposal]
 
-    T[Approved enterprise tools] --> D3[Demo 3: tool-grounded agent]
-    D3 --> R[Local run or Responses host]
+    O --> D3[Demo 3: Harness orchestration]
+    OKB --> D3
+    PKB --> D3
+    D3 --> B
 
-    O --> D4[Demo 4: observable assessment]
-    D4 --> M[Foundry Toolkit, OTLP, or Application Insights]
+    T[Approved enterprise tools] --> D4[Demo 4: tool-grounded agent]
+    D4 --> R[Local run or Responses host]
+
+    O --> D5[Demo 5: observable assessment]
+    D5 --> M[Foundry Toolkit, OTLP, or Application Insights]
 ```
 
 The Foundry IQ path is deliberately separate from model generation:
 
 - `ingest_foundry_iq.py` creates separate opportunity and proposal indexes with semantic ranking, vectors, Azure OpenAI query-time vectorizers, knowledge sources, and planner-backed knowledge bases.
-- `02_patterns.py` uses low-reasoning agentic retrieval to find similar opportunities, filters proposal retrieval by the matched opportunity IDs, and generates a cited Markdown proposal.
+- `02_patterns.py` builds an explicit Agent Framework workflow graph with four nodes and three edges: opportunity retrieval → linked-proposal retrieval → proposal drafting → Sources assembly.
 - The assessment agent receives both the new opportunity and retrieved evidence. Historical claims use citations such as `[0]`, while unsupported choices are labeled as recommendations or assumptions. The script prints only the uploaded proposal URL.
 
 ## Repository layout
@@ -51,15 +56,17 @@ The Foundry IQ path is deliberately separate from model generation:
 | `kickoffdemos/01_intro.py` | Tool-sourced baseline opportunity assessment |
 | `kickoffdemos/ingest_foundry_iq.py` | Three-document Azure AI Search and Foundry IQ ingestion |
 | `kickoffdemos/02_patterns.py` | Two-stage hybrid agentic retrieval and grounded proposal generation |
-| `kickoffdemos/03_patterns.py` | Foundry Hosted Agent adapter for the complete Demo 02 workflow |
-| `kickoffdemos/03_hosted_tools.py` | Enterprise tool calling and optional Responses host |
-| `kickoffdemos/04_observability.py` | Tracing and a custom coverage score |
+| `kickoffdemos/03_harness_simple.py` | Standalone Harness hello world with one synthetic tool |
+| `kickoffdemos/03_harness.py` | Harness comparison using todos, modes, and bounded proposal tools |
+| `kickoffdemos/hosted_proposal_agent.py` | Foundry Hosted Agent adapter for the complete Demo 02 workflow |
+| `kickoffdemos/04_hosted_tools.py` | Enterprise tool calling and optional Responses host |
+| `kickoffdemos/05_observability.py` | Tracing and a custom coverage score |
 | `tests/test_demo_contracts.py` | Offline regression tests for ingestion, authentication, cleanup, and story contracts |
 | `RUN_DEMOS.md` | Detailed setup, execution, validation, and troubleshooting runbook |
-| `DEMO_GUIDE.md` | Presenter runbook for the consistent four-demo story |
+| `DEMO_GUIDE.md` | Presenter runbook for the consistent five-demo story |
 | `.env.example` | Safe configuration template |
 | `requirements.txt` | Base dependencies for local demos |
-| `requirements-hosted.txt` | Optional prerelease dependency for Demo 3 hosted mode |
+| `requirements-hosted.txt` | Optional prerelease dependency for Demo 4 hosted mode |
 
 ## Prerequisites
 
@@ -71,7 +78,7 @@ The Foundry IQ path is deliberately separate from model generation:
 - Either:
   - a Search connection in the Foundry project, or
   - Azure RBAC access to a Search endpoint for the signed-in Azure CLI identity
-- Optional: Application Insights, an OTLP endpoint, or the Foundry Toolkit trace viewer for Demo 4
+- Optional: Application Insights, an OTLP endpoint, or the Foundry Toolkit trace viewer for Demo 5
 
 Live model, Search, Storage, and telemetry calls may incur Azure charges.
 
@@ -96,7 +103,7 @@ Edit `.env` with your resource names. Never commit `.env` or credentials.
 | Variable | Used by | Description |
 | --- | --- | --- |
 | `FOUNDRY_PROJECT_ENDPOINT` | All model demos; Search connection mode | Foundry project endpoint |
-| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Demos 1-4 | Model deployment name |
+| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Demos 1-5 | Model deployment name |
 | `FOUNDRY_IQ_SEARCH_CONNECTION_NAME` | Ingestion and Demo 2 | Foundry project Search connection; required unless a direct Search endpoint is set |
 | `FOUNDRY_IQ_SEARCH_ENDPOINT` | Ingestion and Demo 2 | Optional direct Search endpoint using `AzureCliCredential` |
 | `AZURE_SEARCH_ENDPOINT` | Ingestion and Demo 2 | Alias for the direct Search endpoint |
@@ -112,8 +119,8 @@ Edit `.env` with your resource names. Never commit `.env` or credentials.
 | `FOUNDRY_IQ_PLANNER_MODEL_NAME` | Ingestion | Optional model-name override for agentic query planning |
 | `AZURE_STORAGE_ACCOUNT_URL` | Demo 2 | Optional Blob service URL; absent or blocked storage falls back to `outputs/` |
 | `AZURE_STORAGE_PROPOSAL_CONTAINER_NAME` | Demo 2 | Optional container override; defaults to `opportunity-proposals` |
-| `APPLICATIONINSIGHTS_CONNECTION_STRING` | Demo 4 | Optional Application Insights export |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | Demo 4 | Optional generic OpenTelemetry export |
+| `APPLICATIONINSIGHTS_CONNECTION_STRING` | Demo 5 | Optional Application Insights export |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Demo 5 | Optional generic OpenTelemetry export |
 
 `AZURE_AI_PROJECT_ENDPOINT`, `project_endpoint`, `FOUNDRY_MODEL`, and `deployment_name` remain supported aliases in the sample code.
 
@@ -163,6 +170,66 @@ Create, upload, and get the URL for the grounded proposal:
 python -B kickoffdemos/02_patterns.py
 ```
 
+Show each retrieval and generation stage in the terminal while preserving the final output path on stdout:
+
+```powershell
+python -B kickoffdemos/02_patterns.py --verbose
+```
+
+Run the standalone minimal Harness example. It has one synthetic weather tool and no opportunity,
+retrieval, workflow, or publication logic:
+
+```powershell
+python -B kickoffdemos/03_harness_simple.py
+```
+
+Then compare the fixed graph with the fuller Harness agent that plans the same job through built-in
+todos and plan/execute modes. It receives separate opportunity retrieval, linked-proposal retrieval,
+and publication tools; those tools still enforce ordering, citations, and the final Sources section:
+
+```powershell
+python -B kickoffdemos/03_harness.py --verbose
+```
+
+Launch the observable pixel-art Harness Office at `http://127.0.0.1:8090`:
+
+```powershell
+python -B kickoffdemos/03_harness.py --playground
+```
+
+The character moves from the planning desk to the Foundry IQ shelves, returns to its notebook while
+the model composes, and finishes at the printer with the actual timestamped proposal. The work plan,
+speech bubbles, and timeline are driven by structured Harness middleware and bounded-tool events.
+The plan has no predetermined step count: Agent Framework's `TodoProvider` supplies additions,
+completions, and removals, while the journey trail records every workstation return and retry. These
+views summarize observable actions and results without exposing private chain-of-thought. Use
+`--playground-port <port>` when port 8090 is occupied. Between runs the character sleeps in the office
+nap nook. Each run opens with a visitor ringing the doorbell and handing over the opportunity, which
+wakes the character for a quick stretch before it starts work.
+
+Launch the browser-based Agent Framework DevUI:
+
+```powershell
+python -B kickoffdemos/02_patterns.py --devui
+```
+
+If port 8080 is occupied, choose another loopback port:
+
+```powershell
+python -B kickoffdemos/02_patterns.py --devui --devui-port 8081
+```
+
+In DevUI, select `opportunity-proposal-workflow`. Its structured input is titled **Customer Opportunity / Call for Offer**. Paste the complete customer request, RFP excerpt, or opportunity brief into **Customer Opportunity / Call-for-Offer Text**, including the business goal, current process, constraints, required controls, target outcomes, and mandatory human approvals. The graph displays `retrieve_opportunities`, `retrieve_linked_proposals`, `draft_proposal`, and `assemble_sources` as separate nodes connected by directed edges. The first three nodes emit intermediate progress events; the final node emits the cited proposal. DevUI binds only to `127.0.0.1` and disables authentication for this local development experience.
+
+Open DevUI's **Traces** tab, expand an `executor.process ...` span, and select its
+`workflow.output ...` child span. The child span includes a readable summary and a
+`demo.workflow.output.data` attribute containing that stage's full synthetic output: Foundry IQ
+grounding and references for retrieval stages, or Markdown for drafting stages. This content capture
+is enabled only by `--devui`; normal CLI workflow traces retain counts and titles without raw bodies.
+After the final stage persists the draft, DevUI also shows a separate `workflow.output draft_file`
+span. Its `demo.workflow.output.file_name` and `demo.workflow.output.storage_type` attributes identify
+the actual timestamped Markdown file and whether it was saved to Azure Blob Storage or `outputs/`.
+
 ### Prepare and deploy the hosted workflow
 
 The hosted service is configured in `azure.yaml` as `opportunity-proposal-agent` using direct code deployment and the Responses protocol. It returns proposal Markdown directly instead of a container-local output path.
@@ -194,20 +261,20 @@ You can pass a different opportunity as the positional argument. Retrieval quali
 Run the tool-grounded agent locally:
 
 ```powershell
-python -B kickoffdemos/03_hosted_tools.py
+python -B kickoffdemos/04_hosted_tools.py
 ```
 
 Hosted mode uses a prerelease package and requires a configured Foundry Hosted Agent environment:
 
 ```powershell
 python -m pip install -r requirements-hosted.txt
-python -B kickoffdemos/03_hosted_tools.py --serve
+python -B kickoffdemos/04_hosted_tools.py --serve
 ```
 
 Run the observable assessment:
 
 ```powershell
-python -B kickoffdemos/04_observability.py
+python -B kickoffdemos/05_observability.py
 ```
 
 Prompt and completion content capture is disabled by default. Use `--include-content` only with non-sensitive data and an approved telemetry destination.
@@ -220,7 +287,7 @@ After installing the base requirements, run the standard-library `unittest` suit
 python -B -m unittest discover -s tests -v
 ```
 
-The suite checks ingestion, Search authentication, retrieval cleanup, timestamped non-overwriting proposal uploads, public and private URL behavior, untrusted-evidence instructions, disabled response storage, the shared opportunity, and Demo 4 coverage.
+The suite checks ingestion, Search authentication, retrieval cleanup, timestamped non-overwriting proposal uploads, public and private URL behavior, untrusted-evidence instructions, disabled response storage, the shared opportunity, and Demo 5 coverage.
 
 ## Operational notes
 
@@ -229,7 +296,7 @@ The suite checks ingestion, Search authentication, retrieval cleanup, timestampe
 - The opportunity assessment keeps clinician approval as a mandatory boundary.
 - Stateless agent calls set `store=False` so model responses are not stored by the Responses API.
 - Demo 1 prompt-agent versions and the Demo 2 Search, knowledge, container, and proposal blobs persist after the scripts exit; this repository does not delete Azure resources.
-- The custom Demo 4 coverage score checks for expected phrases. It is illustrative, not a production quality or safety evaluation.
+- The custom Demo 5 coverage score checks for expected phrases. It is illustrative, not a production quality or safety evaluation.
 - Review identity, networking, content safety, evaluations, error handling, and lifecycle management before adapting these samples for production.
 
 ## Public release checklist

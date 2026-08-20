@@ -1,4 +1,4 @@
-"""Demo 03: host the Demo 02 opportunity-to-proposal workflow in Microsoft Foundry.
+"""Host the Demo 02 opportunity-to-proposal workflow in Microsoft Foundry.
 
 The Responses host exposes one bounded tool that executes Demo 02's two-stage hybrid
 agentic retrieval, proposal generation, citation remapping, and Sources section assembly.
@@ -10,6 +10,7 @@ from __future__ import annotations
 import importlib.util
 import logging
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,7 @@ def load_patterns_workflow() -> Any:
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Unable to load the Demo 02 workflow from {module_path}.")
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 

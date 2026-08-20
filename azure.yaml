@@ -9,7 +9,7 @@ services:
         project: .
         host: azure.ai.agent
         language: python
-        startupCommand: python kickoffdemos/03_patterns.py
+        startupCommand: python kickoffdemos/hosted_proposal_agent.py
         description: Creates cited SI proposals from matched opportunities and linked historical proposals.
         metadata:
             tags:
@@ -21,7 +21,7 @@ services:
             - agent-ai-serviceshf3u-project
         codeConfiguration:
             dependencyResolution: remote_build
-            entryPoint: kickoffdemos/03_patterns.py
+            entryPoint: kickoffdemos/hosted_proposal_agent.py
             runtime: python_3_13
         container:
             resources:

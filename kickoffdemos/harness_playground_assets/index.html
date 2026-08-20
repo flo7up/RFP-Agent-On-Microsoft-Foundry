@@ -1,0 +1,559 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script>
+    (() => {
+      const param = new URLSearchParams(window.location.search).get("scoutTheme");
+      const theme =
+        param || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      document.documentElement.setAttribute("data-theme", theme);
+    })();
+  </script>
+  <style>
+    :root {
+      color-scheme: light;
+      --cp-bg: #f7f4ef;
+      --cp-bg-elevated: #fcfbf8;
+      --cp-surface: #ffffff;
+      --cp-surface-soft: #f5f5f5;
+      --cp-border: #dedede;
+      --cp-border-strong: #919191;
+      --cp-text: #242424;
+      --cp-text-muted: #5c5c5c;
+      --cp-text-soft: #6f6f6f;
+      --cp-accent: #b11f4b;
+      --cp-accent-hover: #9a1a41;
+      --cp-accent-soft: rgba(177, 31, 75, 0.08);
+      --cp-accent-fg: #ffffff;
+      --cp-success: #16a34a;
+      --cp-danger: #dc2626;
+      --cp-warning: #f59e0b;
+      --cp-link: #0078d4;
+      --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.12);
+      --cp-overlay: rgba(255, 255, 255, 0.8);
+      --cp-panel: rgba(255, 255, 255, 0.86);
+      --cp-panel-strong: rgba(255, 255, 255, 0.96);
+      --cp-sheen: rgba(255, 255, 255, 0.55);
+      --cp-highlight: rgba(177, 31, 75, 0.12);
+    }
+    html[data-theme="dark"] {
+      color-scheme: dark;
+      --cp-bg: #3d3b3a;
+      --cp-bg-elevated: #343231;
+      --cp-surface: #292929;
+      --cp-surface-soft: #2e2e2e;
+      --cp-border: #474747;
+      --cp-border-strong: #5f5f5f;
+      --cp-text: #dedede;
+      --cp-text-muted: #919191;
+      --cp-text-soft: #b0b0b0;
+      --cp-accent: #fd8ea1;
+      --cp-accent-hover: #fb7b91;
+      --cp-accent-soft: rgba(253, 142, 161, 0.14);
+      --cp-accent-fg: #1a1a1a;
+      --cp-success: #4ade80;
+      --cp-danger: #f87171;
+      --cp-warning: #fbbf24;
+      --cp-link: #4da6ff;
+      --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
+      --cp-overlay: rgba(41, 41, 41, 0.88);
+      --cp-panel: rgba(41, 41, 41, 0.72);
+      --cp-panel-strong: rgba(41, 41, 41, 0.96);
+      --cp-sheen: rgba(255, 255, 255, 0.04);
+      --cp-highlight: rgba(253, 142, 161, 0.12);
+    }
+  </style>
+  <link rel="stylesheet" href="/assets/playground.css">
+  <title>Harness Office</title>
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand-lockup">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M4 19V8l8-4 8 4v11H4Z"/><path d="M9 19v-5h6v5M8 9h.01M12 9h.01M16 9h.01"/></svg>
+      </span>
+      <div>
+        <h1>Harness Office</h1>
+        <p>Opportunity proposal agent · Demo 03</p>
+      </div>
+    </div>
+    <div class="header-actions">
+      <span class="connection-state" id="connectionState"><i></i>Ready</span>
+      <button class="icon-button" id="themeToggle" type="button" title="Toggle theme" aria-label="Toggle theme">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <section class="playground-panel" aria-label="Agent office playground">
+      <nav class="journey-strip" id="journeyTrail" aria-label="Agent journey">
+        <span class="journey-empty">Waiting for the Harness route.</span>
+      </nav>
+
+      <div class="scene-frame">
+        <div class="office" id="office" data-active="idle">
+          <svg class="office-art" viewBox="0 0 400 300" shape-rendering="crispEdges" role="img" aria-labelledby="officeTitle officeDescription">
+            <title id="officeTitle">Pixel-art office with workstations, research shelves, and printer</title>
+            <desc id="officeDescription">The agent walks through a tiled office as observable Harness actions occur.</desc>
+            <defs>
+              <pattern id="mainTiles" width="16" height="16" patternUnits="userSpaceOnUse">
+                <rect width="16" height="16" fill="var(--cp-surface-soft)"/>
+                <rect width="8" height="8" fill="var(--cp-border)" opacity=".45"/>
+                <rect x="8" y="8" width="8" height="8" fill="var(--cp-border)" opacity=".45"/>
+                <path d="M16 0H0V16" fill="none" stroke="var(--cp-border-strong)" stroke-width="1" opacity=".5"/>
+              </pattern>
+              <pattern id="lobbyTiles" width="12" height="12" patternUnits="userSpaceOnUse">
+                <rect width="12" height="12" fill="var(--cp-bg-elevated)"/>
+                <rect x="1" y="1" width="10" height="10" fill="var(--cp-border)" opacity=".3"/>
+                <path d="M12 0H0V12" fill="none" stroke="var(--cp-border-strong)" stroke-width="1" opacity=".5"/>
+              </pattern>
+              <pattern id="darkTiles" width="14" height="14" patternUnits="userSpaceOnUse">
+                <rect width="14" height="14" fill="var(--cp-surface-soft)"/>
+                <rect x="2" y="2" width="4" height="4" fill="var(--cp-border-strong)" opacity=".32"/>
+                <rect x="9" y="9" width="3" height="3" fill="var(--cp-border-strong)" opacity=".32"/>
+                <path d="M14 0H0V14" fill="none" stroke="var(--cp-border-strong)" stroke-width="1" opacity=".65"/>
+              </pattern>
+            </defs>
+
+            <rect x="1" y="1" width="398" height="298" fill="var(--cp-border-strong)"/>
+            <rect x="6" y="6" width="388" height="160" fill="url(#mainTiles)"/>
+            <rect x="6" y="176" width="260" height="118" fill="url(#lobbyTiles)"/>
+            <rect x="276" y="176" width="118" height="118" fill="url(#darkTiles)"/>
+
+            <g class="floor-depth" aria-hidden="true">
+              <rect x="42" y="28" width="158" height="116" fill="var(--cp-accent-soft)" opacity=".36"/>
+              <rect x="46" y="32" width="150" height="108" fill="none" stroke="var(--cp-sheen)" stroke-width="2" opacity=".6"/>
+              <rect x="207" y="101" width="151" height="61" fill="var(--cp-warning)" opacity=".08"/>
+              <rect x="13" y="183" width="142" height="96" fill="var(--cp-sheen)" opacity=".22"/>
+              <rect x="159" y="235" width="103" height="54" fill="var(--cp-accent-soft)" opacity=".34"/>
+              <rect x="292" y="207" width="98" height="76" fill="var(--cp-accent-soft)" opacity=".28"/>
+              <path d="M18 22h3v3h-3zm17 92h2v2h-2zm177-49h3v2h-3zm43 78h2v3h-2zm-219 95h3v3h-3zm104 36h2v2h-2zm151-80h3v3h-3zm82 69h2v2h-2z" fill="var(--cp-border-strong)" opacity=".28"/>
+            </g>
+
+            <g class="pixel-walls" aria-hidden="true">
+              <rect x="1" y="1" width="398" height="6" fill="var(--cp-text-muted)"/>
+              <rect x="1" y="294" width="398" height="5" fill="var(--cp-text-muted)"/>
+              <rect x="1" y="1" width="6" height="298" fill="var(--cp-text-muted)"/>
+              <rect x="394" y="1" width="5" height="298" fill="var(--cp-text-muted)"/>
+              <rect x="6" y="166" width="155" height="10" fill="var(--cp-text-muted)"/>
+              <rect x="190" y="166" width="204" height="10" fill="var(--cp-text-muted)"/>
+              <rect x="266" y="176" width="10" height="55" fill="var(--cp-text-muted)"/>
+              <rect x="266" y="256" width="10" height="38" fill="var(--cp-text-muted)"/>
+              <path d="M6 8h388M8 176h153m29 0h206M276 178v53m0 25v38" stroke="var(--cp-surface)" stroke-width="2" opacity=".65"/>
+              <rect x="52" y="1" width="56" height="7" fill="var(--cp-link)" opacity=".55"/>
+              <rect x="218" y="1" width="58" height="7" fill="var(--cp-link)" opacity=".55"/>
+              <rect x="394" y="52" width="5" height="48" fill="var(--cp-link)" opacity=".55"/>
+            </g>
+
+            <g class="architectural-details" aria-hidden="true">
+              <rect x="52" y="2" width="56" height="2" fill="var(--cp-sheen)"/>
+              <rect x="218" y="2" width="58" height="2" fill="var(--cp-sheen)"/>
+              <rect x="395" y="52" width="2" height="48" fill="var(--cp-sheen)"/>
+              <rect x="157" y="163" width="8" height="16" fill="var(--cp-border-strong)"/>
+              <rect x="188" y="163" width="8" height="16" fill="var(--cp-border-strong)"/>
+              <rect x="161" y="170" width="29" height="4" fill="var(--cp-warning)" opacity=".48"/>
+              <path d="M161 166v-20h3v20m26 0v-20h-3v20" stroke="var(--cp-text-muted)" stroke-width="2"/>
+              <rect x="263" y="227" width="16" height="8" fill="var(--cp-border-strong)"/>
+              <rect x="263" y="252" width="16" height="8" fill="var(--cp-border-strong)"/>
+              <rect x="269" y="231" width="4" height="25" fill="var(--cp-warning)" opacity=".45"/>
+              <rect x="12" y="12" width="74" height="5" fill="var(--cp-sheen)" opacity=".55"/>
+              <rect x="300" y="151" width="76" height="5" fill="var(--cp-sheen)" opacity=".42"/>
+            </g>
+
+            <g class="entrance-door" aria-hidden="true">
+              <rect x="64" y="292" width="40" height="7" fill="var(--cp-bg-elevated)"/>
+              <rect x="60" y="291" width="4" height="8" fill="var(--cp-border-strong)"/>
+              <rect x="104" y="291" width="4" height="8" fill="var(--cp-border-strong)"/>
+              <rect class="ol" x="66" y="283" width="36" height="9" fill="var(--cp-warning)" opacity=".6"/>
+              <rect x="94" y="286" width="5" height="3" fill="var(--cp-text)"/>
+              <rect class="ol" x="68" y="264" width="32" height="17" fill="var(--cp-surface-soft)"/>
+              <rect x="72" y="268" width="24" height="9" fill="var(--cp-border)" opacity=".55"/>
+              <rect x="109" y="283" width="9" height="3" fill="var(--cp-border-strong)"/>
+              <rect class="doorbell-button" x="110" y="286" width="7" height="8" fill="var(--cp-accent)"/>
+            </g>
+
+            <g class="wall-display" aria-hidden="true">
+              <rect class="ol" x="202" y="14" width="58" height="38" fill="var(--cp-border-strong)"/>
+              <rect x="206" y="18" width="50" height="30" fill="var(--cp-surface)"/>
+              <path d="M210 41h42M212 37l8-7 8 3 7-10 8 6 8-3" fill="none" stroke="var(--cp-accent)" stroke-width="2"/>
+              <rect x="214" y="23" width="7" height="4" fill="var(--cp-link)"/>
+              <rect x="227" y="20" width="18" height="3" fill="var(--cp-border)"/>
+            </g>
+
+            <g class="station desk-station" data-station="planning_desk writing_desk">
+              <rect class="station-zone" x="48" y="34" width="144" height="104" fill="var(--cp-accent-soft)" stroke="var(--cp-accent)" stroke-width="1" stroke-dasharray="3 3"/>
+              <path d="M70 59h114v20H92v54H72Z" fill="var(--cp-text)" opacity=".15" transform="translate(3 4)"/>
+              <path class="ol" d="M67 54h112v20H87v54H67Z" fill="var(--cp-warning)" opacity=".62"/>
+              <path d="M72 59h102M72 78h11v45" fill="none" stroke="var(--cp-sheen)" stroke-width="2"/>
+              <rect class="ol" x="108" y="27" width="48" height="29" fill="var(--cp-border-strong)"/>
+              <rect class="pixel-screen" x="112" y="31" width="40" height="20" fill="var(--cp-surface)"/>
+              <rect x="116" y="35" width="32" height="3" fill="var(--cp-link)" opacity=".7"/>
+              <rect x="116" y="41" width="12" height="6" fill="var(--cp-accent)" opacity=".7"/>
+              <rect x="131" y="40" width="17" height="2" fill="var(--cp-border)"/>
+              <rect x="129" y="56" width="7" height="6" fill="var(--cp-text-muted)"/>
+              <rect class="ol" x="113" y="64" width="40" height="5" fill="var(--cp-border-strong)"/>
+              <path d="M117 65h3m3 0h3m3 0h3m3 0h3m3 0h3m3 0h3" stroke="var(--cp-surface)" stroke-width="1"/>
+              <g class="planning-pad">
+                <rect x="91" y="61" width="17" height="12" fill="var(--cp-surface)" stroke="var(--cp-border)"/>
+                <path d="m94 64 2 2 3-4m-5 7 2 2 3-4" fill="none" stroke="var(--cp-success)" stroke-width="1"/>
+              </g>
+              <g class="notebook">
+                <path d="M148 69h24l-3-14h-18Z" fill="var(--cp-border-strong)"/>
+                <rect x="153" y="57" width="14" height="9" fill="var(--cp-surface)"/>
+                <path class="typing-line" d="M155 60h10m-10 3h7" stroke="var(--cp-accent)" stroke-width="1"/>
+              </g>
+              <rect class="ol" x="73" y="88" width="12" height="18" fill="var(--cp-border-strong)"/>
+              <rect x="70" y="106" width="18" height="7" fill="var(--cp-text-muted)"/>
+              <g class="desk-chair">
+                <rect x="89" y="113" width="6" height="11" fill="var(--cp-text-muted)"/>
+                <rect x="121" y="113" width="6" height="11" fill="var(--cp-text-muted)"/>
+                <rect class="ol" x="94" y="107" width="28" height="19" fill="var(--cp-surface-soft)"/>
+                <rect x="98" y="111" width="20" height="12" fill="var(--cp-sheen)"/>
+                <rect class="ol" x="92" y="125" width="32" height="9" fill="var(--cp-border-strong)"/>
+                <rect x="96" y="128" width="24" height="3" fill="var(--cp-text)" opacity=".35"/>
+                <rect x="105" y="134" width="6" height="4" fill="var(--cp-text-muted)"/>
+              </g>
+              <rect x="160" y="81" width="10" height="10" fill="var(--cp-surface)" stroke="var(--cp-text-muted)"/>
+              <rect x="163" y="78" width="4" height="3" fill="var(--cp-accent)"/>
+              <rect x="88" y="83" width="19" height="12" fill="var(--cp-border-strong)"/>
+              <rect x="91" y="86" width="13" height="6" fill="var(--cp-surface-soft)"/>
+              <rect x="174" y="61" width="3" height="9" fill="var(--cp-accent)"/>
+              <rect x="172" y="69" width="7" height="2" fill="var(--cp-text-muted)"/>
+            </g>
+
+            <g class="station opportunity-shelf" data-station="opportunity_shelf">
+              <rect class="station-zone" x="284" y="12" width="84" height="54" fill="var(--cp-accent-soft)" stroke="var(--cp-accent)" stroke-width="1" stroke-dasharray="3 3"/>
+              <rect x="294" y="20" width="72" height="46" fill="var(--cp-text)" opacity=".16"/>
+              <rect class="ol" x="290" y="16" width="72" height="46" fill="var(--cp-border-strong)"/>
+              <rect x="294" y="20" width="64" height="17" fill="var(--cp-surface-soft)"/>
+              <rect x="294" y="41" width="64" height="17" fill="var(--cp-surface-soft)"/>
+              <g class="books">
+                <rect x="298" y="23" width="5" height="14" fill="var(--cp-accent)"/>
+                <rect x="305" y="26" width="7" height="11" fill="var(--cp-link)"/>
+                <rect x="314" y="21" width="5" height="16" fill="var(--cp-warning)"/>
+                <rect x="321" y="24" width="8" height="13" fill="var(--cp-success)"/>
+                <rect x="331" y="22" width="5" height="15" fill="var(--cp-text-muted)"/>
+                <rect x="338" y="27" width="16" height="10" fill="var(--cp-surface)" stroke="var(--cp-border)"/>
+                <rect x="297" y="45" width="15" height="10" fill="var(--cp-surface)" stroke="var(--cp-border)"/>
+                <rect x="315" y="44" width="6" height="14" fill="var(--cp-link)"/>
+                <rect x="323" y="47" width="5" height="11" fill="var(--cp-accent)"/>
+                <rect x="330" y="43" width="9" height="15" fill="var(--cp-warning)"/>
+                <rect x="342" y="46" width="12" height="12" fill="var(--cp-text-muted)"/>
+              </g>
+              <rect x="290" y="16" width="3" height="46" fill="var(--cp-sheen)" opacity=".55"/>
+              <rect x="359" y="18" width="3" height="44" fill="var(--cp-text)" opacity=".28"/>
+            </g>
+
+            <g class="station proposal-shelf" data-station="proposal_shelf">
+              <rect class="station-zone" x="284" y="76" width="84" height="58" fill="var(--cp-accent-soft)" stroke="var(--cp-accent)" stroke-width="1" stroke-dasharray="3 3"/>
+              <rect x="294" y="85" width="72" height="48" fill="var(--cp-text)" opacity=".16"/>
+              <rect class="ol" x="290" y="81" width="72" height="48" fill="var(--cp-border-strong)"/>
+              <rect x="294" y="85" width="64" height="17" fill="var(--cp-surface-soft)"/>
+              <rect x="294" y="106" width="64" height="19" fill="var(--cp-surface-soft)"/>
+              <g class="folders">
+                <path d="M298 91h12l3 3h13v7h-28Z" fill="var(--cp-accent)"/>
+                <path d="M329 88h9l3 3h13v10h-25Z" fill="var(--cp-link)"/>
+                <rect x="297" y="110" width="7" height="15" fill="var(--cp-warning)"/>
+                <rect x="307" y="113" width="13" height="12" fill="var(--cp-surface)" stroke="var(--cp-border)"/>
+                <rect x="323" y="109" width="6" height="16" fill="var(--cp-success)"/>
+                <rect x="332" y="112" width="9" height="13" fill="var(--cp-accent)"/>
+                <rect x="344" y="108" width="10" height="17" fill="var(--cp-text-muted)"/>
+              </g>
+              <rect x="290" y="81" width="3" height="48" fill="var(--cp-sheen)" opacity=".55"/>
+              <rect x="359" y="83" width="3" height="46" fill="var(--cp-text)" opacity=".28"/>
+            </g>
+
+            <g class="secondary-workstation" aria-hidden="true">
+              <path d="M221 112h111v18h-94v32h-17Z" fill="var(--cp-text)" opacity=".15"/>
+              <path class="ol" d="M218 108h111v18h-94v32h-17Z" fill="var(--cp-warning)" opacity=".6"/>
+              <rect class="ol" x="273" y="86" width="34" height="24" fill="var(--cp-border-strong)"/>
+              <rect class="pixel-screen" x="277" y="90" width="26" height="15" fill="var(--cp-link)" opacity=".7"/>
+              <rect x="280" y="93" width="4" height="4" fill="var(--cp-surface)"/>
+              <rect x="287" y="93" width="4" height="4" fill="var(--cp-accent)"/>
+              <rect x="294" y="93" width="4" height="4" fill="var(--cp-success)"/>
+              <rect x="277" y="114" width="34" height="5" fill="var(--cp-border-strong)"/>
+              <rect class="ol" x="238" y="128" width="27" height="29" fill="var(--cp-border-strong)"/>
+              <rect x="242" y="132" width="19" height="21" fill="var(--cp-surface-soft)"/>
+              <rect x="332" y="102" width="20" height="18" fill="var(--cp-surface)" stroke="var(--cp-border-strong)" stroke-width="2"/>
+              <rect x="336" y="96" width="12" height="7" fill="var(--cp-bg-elevated)" stroke="var(--cp-border)"/>
+              <rect x="314" y="113" width="10" height="6" fill="var(--cp-surface)" stroke="var(--cp-border)"/>
+              <rect x="318" y="115" width="4" height="2" fill="var(--cp-accent)"/>
+              <rect x="245" y="154" width="5" height="7" fill="var(--cp-text-muted)"/>
+              <rect x="258" y="154" width="5" height="7" fill="var(--cp-text-muted)"/>
+            </g>
+
+            <g class="station briefing-station" data-station="briefing_area">
+              <rect class="station-zone" x="18" y="188" width="136" height="86" fill="var(--cp-accent-soft)" stroke="var(--cp-accent)" stroke-width="1" stroke-dasharray="3 3"/>
+              <rect x="26" y="201" width="29" height="24" fill="var(--cp-text)" opacity=".14"/>
+              <rect x="62" y="201" width="29" height="24" fill="var(--cp-text)" opacity=".14"/>
+              <rect class="ol" x="24" y="197" width="29" height="24" fill="var(--cp-border-strong)"/>
+              <rect x="28" y="201" width="21" height="16" fill="var(--cp-surface-soft)"/>
+              <rect class="ol" x="60" y="197" width="29" height="24" fill="var(--cp-border-strong)"/>
+              <rect x="64" y="201" width="21" height="16" fill="var(--cp-surface-soft)"/>
+              <rect x="28" y="221" width="5" height="8" fill="var(--cp-text-muted)"/>
+              <rect x="44" y="221" width="5" height="8" fill="var(--cp-text-muted)"/>
+              <rect x="64" y="221" width="5" height="8" fill="var(--cp-text-muted)"/>
+              <rect x="80" y="221" width="5" height="8" fill="var(--cp-text-muted)"/>
+              <rect class="ol" x="101" y="192" width="43" height="32" fill="var(--cp-surface)"/>
+              <rect x="106" y="197" width="33" height="22" fill="var(--cp-accent-soft)"/>
+              <path d="m108 202 14 9 15-9M108 202h29v15h-29Z" fill="none" stroke="var(--cp-accent)" stroke-width="2"/>
+              <rect class="ol" x="109" y="238" width="36" height="20" fill="var(--cp-warning)" opacity=".62"/>
+              <rect x="113" y="234" width="10" height="7" fill="var(--cp-surface)" stroke="var(--cp-border)"/>
+              <rect x="126" y="231" width="13" height="10" fill="var(--cp-surface)" stroke="var(--cp-border)"/>
+              <rect x="116" y="247" width="20" height="3" fill="var(--cp-sheen)"/>
+            </g>
+
+            <g class="lobby-props" aria-hidden="true">
+              <rect class="ol" x="170" y="191" width="64" height="42" fill="var(--cp-surface)"/>
+              <rect x="176" y="197" width="52" height="30" fill="var(--cp-accent-soft)"/>
+              <path d="M180 217h12l6-14 8 18 6-10 12 6" fill="none" stroke="var(--cp-accent)" stroke-width="2"/>
+            </g>
+
+            <g class="nap-nook" aria-hidden="true">
+              <rect x="169" y="244" width="94" height="44" fill="var(--cp-text)" opacity=".14"/>
+              <rect x="165" y="238" width="94" height="48" fill="var(--cp-accent-soft)" stroke="var(--cp-border)"/>
+              <rect class="ol" x="168" y="244" width="89" height="38" fill="var(--cp-border-strong)"/>
+              <rect x="173" y="248" width="80" height="29" fill="var(--cp-surface)"/>
+              <rect x="176" y="251" width="20" height="12" fill="var(--cp-bg-elevated)" stroke="var(--cp-border)"/>
+              <rect x="197" y="249" width="56" height="28" fill="var(--cp-link)" opacity=".38"/>
+              <path d="M202 249v28m10-28v28m10-28v28m10-28v28m10-28v28" stroke="var(--cp-sheen)" stroke-width="2"/>
+              <rect x="165" y="241" width="6" height="43" fill="var(--cp-text-muted)"/>
+              <rect x="173" y="282" width="6" height="5" fill="var(--cp-text-muted)"/>
+              <rect x="247" y="282" width="6" height="5" fill="var(--cp-text-muted)"/>
+              <rect x="240" y="234" width="14" height="8" fill="var(--cp-surface)" stroke="var(--cp-border)"/>
+              <rect x="244" y="236" width="2" height="2" fill="var(--cp-accent)"/>
+              <rect class="ol" x="152" y="256" width="10" height="19" fill="var(--cp-warning)" opacity=".62"/>
+              <rect x="154" y="249" width="6" height="8" fill="var(--cp-surface)" stroke="var(--cp-border)"/>
+              <rect x="157" y="247" width="1" height="3" fill="var(--cp-warning)"/>
+              <path d="M181 289h10v4h-10zm17 0h10v4h-10z" fill="var(--cp-accent)" opacity=".7"/>
+            </g>
+
+            <g class="station printer-station" data-station="printer">
+              <rect class="station-zone" x="298" y="205" width="88" height="76" fill="var(--cp-accent-soft)" stroke="var(--cp-accent)" stroke-width="1" stroke-dasharray="3 3"/>
+              <rect x="330" y="224" width="48" height="40" fill="var(--cp-text)" opacity=".16"/>
+              <rect class="ol" x="326" y="220" width="48" height="40" fill="var(--cp-border-strong)"/>
+              <rect x="331" y="225" width="38" height="24" fill="var(--cp-surface-soft)"/>
+              <rect x="338" y="213" width="25" height="13" fill="var(--cp-surface)" stroke="var(--cp-border)"/>
+              <rect x="337" y="249" width="27" height="7" fill="var(--cp-surface)"/>
+              <rect class="printer-led" x="365" y="229" width="3" height="3" fill="var(--cp-success)"/>
+              <rect class="ol" x="304" y="214" width="16" height="37" fill="var(--cp-text-muted)"/>
+              <rect x="308" y="218" width="8" height="13" fill="var(--cp-link)" opacity=".7"/>
+              <rect x="307" y="237" width="10" height="3" fill="var(--cp-border)"/>
+              <rect x="307" y="243" width="10" height="3" fill="var(--cp-border)"/>
+              <rect x="307" y="266" width="67" height="10" fill="var(--cp-warning)" opacity=".42" stroke="var(--cp-text-muted)"/>
+              <path d="M341 238h18m-18 4h13" stroke="var(--cp-border)" stroke-width="1"/>
+              <rect x="378" y="245" width="5" height="27" fill="var(--cp-surface)" stroke="var(--cp-border)"/>
+            </g>
+
+            <g class="station neighbor-house" data-station="neighbor_house">
+              <rect class="station-zone" x="279" y="178" width="109" height="38" fill="var(--cp-accent-soft)" stroke="var(--cp-accent)" stroke-width="1" stroke-dasharray="3 3"/>
+              <rect x="281" y="179" width="106" height="33" fill="var(--cp-accent-soft)" opacity=".46"/>
+              <path d="M280 185h108l-8-8h-92Z" fill="var(--cp-accent)" opacity=".5" stroke="var(--cp-text)" stroke-width="1"/>
+              <path d="M288 180h12v4h-12zm18 0h12v4h-12zm18 0h12v4h-12zm18 0h12v4h-12zm18 0h12v4h-12" fill="var(--cp-surface)" opacity=".65"/>
+              <rect class="ol" x="318" y="189" width="59" height="19" fill="var(--cp-warning)" opacity=".62"/>
+              <rect class="ol" x="337" y="181" width="27" height="15" fill="var(--cp-border-strong)"/>
+              <rect class="review-screen" x="341" y="184" width="19" height="9" fill="var(--cp-surface)"/>
+              <rect x="344" y="187" width="12" height="1" fill="var(--cp-accent)"/>
+              <rect x="344" y="190" width="8" height="1" fill="var(--cp-link)"/>
+              <rect class="ol" x="286" y="184" width="24" height="20" fill="var(--cp-surface)"/>
+              <rect x="290" y="188" width="4" height="4" fill="var(--cp-accent)"/>
+              <rect x="297" y="188" width="4" height="4" fill="var(--cp-link)"/>
+              <rect x="304" y="188" width="3" height="4" fill="var(--cp-success)"/>
+              <rect x="290" y="196" width="17" height="2" fill="var(--cp-border)"/>
+              <rect x="277" y="231" width="12" height="25" fill="var(--cp-warning)" opacity=".34"/>
+              <path d="M279 235h8m-8 5h8m-8 5h8m-8 5h8" stroke="var(--cp-sheen)" stroke-width="1"/>
+            </g>
+
+            <g class="pixel-plants" aria-hidden="true">
+              <g transform="translate(14 125)">
+                <rect class="ol" x="8" y="20" width="16" height="12" fill="var(--cp-text-muted)"/>
+                <rect x="10" y="5" width="5" height="18" fill="var(--cp-success)"/>
+                <rect x="3" y="9" width="8" height="7" fill="var(--cp-success)" opacity=".75"/>
+                <rect x="15" y="1" width="8" height="11" fill="var(--cp-success)"/>
+                <rect x="21" y="10" width="7" height="9" fill="var(--cp-success)" opacity=".65"/>
+              </g>
+              <g transform="translate(365 130)">
+                <rect class="ol" x="6" y="20" width="16" height="12" fill="var(--cp-text-muted)"/>
+                <rect x="9" y="3" width="5" height="19" fill="var(--cp-success)"/>
+                <rect x="2" y="8" width="8" height="8" fill="var(--cp-success)" opacity=".7"/>
+                <rect x="14" y="0" width="8" height="11" fill="var(--cp-success)"/>
+              </g>
+              <g transform="translate(11 258)">
+                <rect class="ol" x="8" y="20" width="18" height="12" fill="var(--cp-text-muted)"/>
+                <rect x="11" y="4" width="6" height="18" fill="var(--cp-success)"/>
+                <rect x="3" y="8" width="9" height="9" fill="var(--cp-success)" opacity=".7"/>
+                <rect x="17" y="1" width="8" height="12" fill="var(--cp-success)"/>
+                <rect x="23" y="10" width="7" height="9" fill="var(--cp-success)" opacity=".7"/>
+              </g>
+            </g>
+
+            <path id="routePath" class="route-path" d="M55 240L55 240"/>
+          </svg>
+
+          <div class="agent is-sleeping" id="agent" aria-label="Sleeping opportunity proposal agent">
+            <div class="agent-speech" id="agentSpeech" role="status" aria-live="polite">Z z z...</div>
+            <div class="sleep-head" aria-hidden="true"></div>
+            <div class="agent-sprite">
+              <svg class="agent-character" viewBox="0 0 32 42" shape-rendering="crispEdges" aria-hidden="true">
+              <rect x="6" y="39" width="20" height="3" fill="var(--cp-border-strong)" opacity=".55"/>
+              <g class="agent-body">
+                <rect x="7" y="20" width="18" height="13" fill="var(--cp-accent)"/>
+                <rect x="10" y="22" width="12" height="3" fill="var(--cp-accent-fg)" opacity=".35"/>
+                <rect class="arm arm-left" x="4" y="21" width="4" height="12" fill="var(--cp-warning)"/>
+                <rect class="arm arm-right" x="24" y="21" width="4" height="12" fill="var(--cp-warning)"/>
+                <rect class="leg leg-left" x="9" y="32" width="5" height="8" fill="var(--cp-link)"/>
+                <rect class="leg leg-right" x="18" y="32" width="5" height="8" fill="var(--cp-link)"/>
+              </g>
+              <rect x="8" y="5" width="16" height="15" fill="var(--cp-warning)"/>
+              <rect x="10" y="2" width="12" height="4" fill="var(--cp-text)"/>
+              <rect x="6" y="6" width="4" height="8" fill="var(--cp-text)"/>
+              <rect x="22" y="6" width="4" height="8" fill="var(--cp-text)"/>
+              <rect x="6" y="10" width="2" height="5" fill="var(--cp-warning)"/>
+              <rect x="24" y="10" width="2" height="5" fill="var(--cp-warning)"/>
+              <rect class="face-detail eye eye-left" x="11" y="10" width="2" height="2" fill="var(--cp-text)"/>
+              <rect class="face-detail eye eye-right" x="19" y="10" width="2" height="2" fill="var(--cp-text)"/>
+              <rect class="face-detail mouth" x="14" y="15" width="5" height="2" fill="var(--cp-accent-hover)"/>
+              <rect x="21" y="7" width="3" height="7" fill="var(--cp-accent)" opacity=".16"/>
+              <rect x="12" y="6" width="7" height="1" fill="var(--cp-text-muted)"/>
+              <rect x="9" y="18" width="14" height="2" fill="var(--cp-warning)" opacity=".65"/>
+              <rect x="7" y="27" width="18" height="2" fill="var(--cp-accent-hover)" opacity=".5"/>
+              <rect x="8" y="39" width="6" height="2" fill="var(--cp-text)"/>
+              <rect x="18" y="39" width="6" height="2" fill="var(--cp-text)"/>
+              <g class="clipboard">
+                <rect x="23" y="25" width="7" height="10" fill="var(--cp-surface)" stroke="var(--cp-border-strong)" stroke-width="1"/>
+                <rect x="25" y="28" width="3" height="1" fill="var(--cp-accent)"/>
+                <rect x="25" y="31" width="3" height="1" fill="var(--cp-border-strong)"/>
+              </g>
+              </svg>
+            </div>
+          </div>
+
+          <div class="sleep-cover" aria-hidden="true"><i></i><i></i><i></i></div>
+
+          <div class="visitor" id="visitor" aria-hidden="true">
+            <div class="visitor-bubble" id="visitorBubble"></div>
+            <svg viewBox="0 0 32 42" shape-rendering="crispEdges">
+              <rect x="6" y="39" width="20" height="3" fill="var(--cp-border-strong)" opacity=".5"/>
+              <rect x="7" y="20" width="18" height="13" fill="var(--cp-link)"/>
+              <rect x="10" y="22" width="12" height="3" fill="var(--cp-surface)" opacity=".4"/>
+              <rect x="4" y="21" width="4" height="12" fill="var(--cp-warning)"/>
+              <rect x="24" y="21" width="4" height="12" fill="var(--cp-warning)"/>
+              <rect x="9" y="32" width="5" height="8" fill="var(--cp-text-muted)"/>
+              <rect x="18" y="32" width="5" height="8" fill="var(--cp-text-muted)"/>
+              <rect x="8" y="5" width="16" height="15" fill="var(--cp-warning)"/>
+              <rect x="7" y="2" width="18" height="5" fill="var(--cp-accent-hover)"/>
+              <rect x="11" y="10" width="2" height="2" fill="var(--cp-text)"/>
+              <rect x="19" y="10" width="2" height="2" fill="var(--cp-text)"/>
+              <rect x="13" y="15" width="6" height="2" fill="var(--cp-accent-hover)"/>
+              <rect x="0" y="23" width="9" height="11" fill="var(--cp-surface)" stroke="var(--cp-text)" stroke-width="1"/>
+              <rect x="2" y="26" width="5" height="1" fill="var(--cp-accent)"/>
+              <rect x="2" y="29" width="5" height="1" fill="var(--cp-border-strong)"/>
+            </svg>
+          </div>
+
+          <div class="handover-doc" id="handoverDoc" aria-hidden="true"></div>
+
+          <div class="reviewer" id="styleReviewer" aria-label="Proposal style review subagent">
+            <div class="reviewer-bubble" id="reviewerBubble"></div>
+            <svg viewBox="0 0 32 42" shape-rendering="crispEdges" aria-hidden="true">
+              <rect x="6" y="39" width="20" height="3" fill="var(--cp-border-strong)" opacity=".5"/>
+              <rect x="7" y="20" width="18" height="13" fill="var(--cp-success)"/>
+              <rect x="10" y="22" width="12" height="3" fill="var(--cp-surface)" opacity=".35"/>
+              <rect class="reviewer-arm" x="4" y="21" width="4" height="12" fill="var(--cp-warning)"/>
+              <rect x="24" y="21" width="4" height="12" fill="var(--cp-warning)"/>
+              <rect x="9" y="32" width="5" height="8" fill="var(--cp-accent)"/>
+              <rect x="18" y="32" width="5" height="8" fill="var(--cp-accent)"/>
+              <rect x="8" y="5" width="16" height="15" fill="var(--cp-warning)"/>
+              <rect x="7" y="2" width="18" height="6" fill="var(--cp-accent)"/>
+              <rect x="5" y="6" width="4" height="8" fill="var(--cp-accent)"/>
+              <rect x="23" y="6" width="4" height="8" fill="var(--cp-accent)"/>
+              <rect x="11" y="10" width="2" height="2" fill="var(--cp-text)"/>
+              <rect x="19" y="10" width="2" height="2" fill="var(--cp-text)"/>
+              <rect x="14" y="15" width="5" height="2" fill="var(--cp-accent-hover)"/>
+              <rect x="1" y="25" width="8" height="10" fill="var(--cp-surface)" stroke="var(--cp-text)" stroke-width="1"/>
+              <rect x="3" y="28" width="4" height="1" fill="var(--cp-accent)"/>
+              <rect x="3" y="31" width="4" height="1" fill="var(--cp-link)"/>
+            </svg>
+          </div>
+
+          <div class="printed-document" id="printedDocument" aria-live="polite" hidden>
+            <div class="paper-icon" aria-hidden="true">
+              <svg viewBox="0 0 64 80"><path d="M9 3h31l15 15v59H9Z"/><path d="M40 3v15h15M18 34h28M18 45h28M18 56h20"/></svg>
+            </div>
+            <strong>Proposal ready</strong>
+            <span id="printedFileName"></span>
+            <a id="downloadDocument" href="#" download>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14"/></svg>
+              Download
+            </a>
+          </div>
+        </div>
+      </div>
+
+      <form class="brief-form" id="runForm">
+        <div class="brief-field">
+          <label for="opportunityInput">Opportunity brief</label>
+          <textarea id="opportunityInput" name="opportunity" rows="3" required maxlength="60000"></textarea>
+        </div>
+        <button class="run-button" id="runButton" type="submit">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7Z"/></svg>
+          <span>Run agent</span>
+        </button>
+      </form>
+    </section>
+
+    <aside class="observation-panel" aria-label="Live agent activity">
+      <header class="panel-header">
+        <div>
+          <p class="eyebrow">LIVE RUN</p>
+          <h2>Agent activity</h2>
+        </div>
+        <span class="event-count" id="eventCount">0 events</span>
+      </header>
+
+      <div class="current-activity" id="currentActivity" data-state="idle">
+        <i aria-hidden="true"></i>
+        <span>
+          <small id="currentActivityArea">Idle</small>
+          <strong id="currentActivityTitle">Waiting for an opportunity</strong>
+        </span>
+      </div>
+
+      <section class="plan-section" aria-labelledby="planHeading">
+        <div class="section-heading">
+          <h3 id="planHeading">Work plan</h3>
+          <span id="planProgress">0 / 0</span>
+        </div>
+        <div class="plan-meter" role="progressbar" aria-labelledby="planHeading" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
+          <i id="planMeterFill"></i>
+        </div>
+        <ol class="todo-list" id="todoList">
+          <li class="empty-state">Waiting for the Harness plan.</li>
+        </ol>
+      </section>
+
+      <section class="activity-section" aria-labelledby="activityHeading">
+        <div class="section-heading">
+          <h3 id="activityHeading">Timeline</h3>
+          <span class="info-button" title="Shows observable planning and tool actions, not private chain-of-thought" aria-label="About observable agent activity">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5m0-8h.01"/></svg>
+          </span>
+        </div>
+        <div class="event-log" id="eventLog" role="log" aria-live="polite">
+          <div class="timeline-empty" id="timelineEmpty">
+            <span aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M12 3v4m0 10v4M3 12h4m10 0h4M5.6 5.6l2.8 2.8m7.2 7.2 2.8 2.8m0-12.8-2.8 2.8m-7.2 7.2-2.8 2.8"/></svg>
+            </span>
+            <p>Ready for a new run.</p>
+          </div>
+        </div>
+      </section>
+    </aside>
+  </main>
+
+  <script type="module" src="/assets/playground.js"></script>
+</body>
+</html>
