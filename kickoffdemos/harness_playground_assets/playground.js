@@ -9,7 +9,20 @@ const elements = {
   eventCount: document.querySelector("#eventCount"),
   eventLog: document.querySelector("#eventLog"),
   handoverDoc: document.querySelector("#handoverDoc"),
+  inspectorClose: document.querySelector("#inspectorClose"),
+  inspectorResources: document.querySelector("#inspectorResources"),
+  inspectorTitle: document.querySelector("#inspectorTitle"),
   journeyTrail: document.querySelector("#journeyTrail"),
+  libraryInspector: document.querySelector("#libraryInspector"),
+  documentChips: document.querySelector("#documentChips"),
+  documentContent: document.querySelector("#documentContent"),
+  documentDetail: document.querySelector("#documentDetail"),
+  documentEmpty: document.querySelector("#documentEmpty"),
+  documentKicker: document.querySelector("#documentKicker"),
+  documentList: document.querySelector("#documentList"),
+  documentMetadata: document.querySelector("#documentMetadata"),
+  documentTitle: document.querySelector("#documentTitle"),
+  documentView: document.querySelector("#documentView"),
   office: document.querySelector("#office"),
   opportunityInput: document.querySelector("#opportunityInput"),
   planMeter: document.querySelector(".plan-meter"),
@@ -58,6 +71,15 @@ let eventTotal = 0;
 let isAnimating = false;
 let journeyStops = [];
 let todos = [];
+let activeLibrary = null;
+const libraryState = {
+  opportunity_shelf: { documents: [], knowledgeBase: "", searchIndex: "" },
+  proposal_shelf: { documents: [], knowledgeBase: "", searchIndex: "" },
+};
+const libraryLabels = {
+  opportunity_shelf: "Inspect historical opportunity documents",
+  proposal_shelf: "Inspect linked proposal documents",
+};
 
 function setThemeIconLabel() {
   const theme = document.documentElement.dataset.theme;
@@ -311,6 +333,106 @@ function activityCategory(event) {
   return "Run";
 }
 
+function libraryForEvent(event) {
+  if (event.kind === "research.opportunities.completed") return "opportunity_shelf";
+  if (event.kind === "research.proposals.completed") return "proposal_shelf";
+  return null;
+}
+
+function updateLibraryState(event) {
+  const library = libraryForEvent(event);
+  if (!library || !Array.isArray(event.data?.documents)) return;
+  libraryState[library] = {
+    documents: event.data.documents,
+    knowledgeBase: String(event.data.knowledge_base ?? ""),
+    searchIndex: String(event.data.search_index ?? ""),
+  };
+  const shelf = document.querySelector(`[data-inspector="${library}"]`);
+  shelf?.classList.toggle("has-documents", event.data.documents.length > 0);
+  shelf?.setAttribute(
+    "aria-label",
+    `${shelf.getAttribute("aria-label")?.replace(/, \d+ documents$/, "")}, ${event.data.documents.length} documents`,
+  );
+  if (activeLibrary === library && elements.libraryInspector.open) renderLibrary(library);
+}
+
+function appendMetadata(label, value) {
+  if (value === null || value === undefined || value === "") return;
+  const term = document.createElement("dt");
+  term.textContent = label;
+  const description = document.createElement("dd");
+  description.textContent = String(value);
+  elements.documentMetadata.append(term, description);
+}
+
+function selectDocument(library, index) {
+  const documentData = libraryState[library].documents[index];
+  if (!documentData) return;
+  elements.documentList.querySelectorAll("button").forEach((button, buttonIndex) => {
+    button.classList.toggle("is-selected", buttonIndex === index);
+    button.setAttribute("aria-current", buttonIndex === index ? "true" : "false");
+  });
+  elements.documentEmpty.hidden = true;
+  elements.documentView.hidden = false;
+  elements.documentKicker.textContent = `${documentData.document_type || "document"} · reference [${documentData.reference_id}]`;
+  elements.documentTitle.textContent = documentData.title;
+  elements.documentChips.replaceChildren();
+  [documentData.customer, documentData.industry].filter(Boolean).forEach((value) => {
+    const chip = document.createElement("span");
+    chip.textContent = value;
+    elements.documentChips.append(chip);
+  });
+  elements.documentMetadata.replaceChildren();
+  appendMetadata("Document ID", documentData.document_id);
+  appendMetadata("Document key", documentData.doc_key);
+  appendMetadata("Opportunity ID", documentData.opportunity_id);
+  appendMetadata("Source path", documentData.source_path);
+  appendMetadata(
+    "Reranker score",
+    typeof documentData.reranker_score === "number"
+      ? documentData.reranker_score.toFixed(4)
+      : "Not returned",
+  );
+  elements.documentContent.textContent = documentData.content || "No source content returned.";
+}
+
+function renderLibrary(library) {
+  const config = libraryState[library];
+  const isOpportunityLibrary = library === "opportunity_shelf";
+  elements.inspectorTitle.textContent = isOpportunityLibrary
+    ? "Historical opportunity library"
+    : "Linked proposal library";
+  elements.inspectorResources.textContent = [config.knowledgeBase, config.searchIndex]
+    .filter(Boolean)
+    .join(" · ");
+  elements.documentList.replaceChildren();
+  elements.documentView.hidden = true;
+  elements.documentEmpty.hidden = false;
+  elements.documentEmpty.textContent = config.documents.length
+    ? "Select a retrieved document."
+    : "No documents retrieved in this run.";
+  config.documents.forEach((documentData, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    const title = document.createElement("strong");
+    title.textContent = documentData.title;
+    const meta = document.createElement("span");
+    meta.textContent = [documentData.customer, documentData.document_type]
+      .filter(Boolean)
+      .join(" · ");
+    button.append(title, meta);
+    button.addEventListener("click", () => selectDocument(library, index));
+    elements.documentList.append(button);
+  });
+  if (config.documents.length) selectDocument(library, 0);
+}
+
+function openLibrary(library) {
+  activeLibrary = library;
+  renderLibrary(library);
+  if (!elements.libraryInspector.open) elements.libraryInspector.showModal();
+}
+
 function updateCurrentActivity(event) {
   const isError = event.status === "error" || event.kind.endsWith(".failed");
   const isComplete = event.kind === "agent.completed";
@@ -347,10 +469,13 @@ function addTimelineEvent(event) {
   summary.append(meta, message);
   item.append(summary);
 
-  if (event.data && Object.keys(event.data).length > 0) {
+  const timelineData = Object.fromEntries(
+    Object.entries(event.data ?? {}).filter(([name]) => name !== "documents"),
+  );
+  if (Object.keys(timelineData).length > 0) {
     const data = document.createElement("pre");
     data.className = "event-data";
-    data.textContent = JSON.stringify(event.data, null, 2);
+    data.textContent = JSON.stringify(timelineData, null, 2);
     item.append(data);
   }
   elements.eventLog.append(item);
@@ -525,6 +650,7 @@ async function drainVisualQueue() {
 function handleHarnessEvent(event) {
   if (processedSequences.has(event.sequence)) return;
   processedSequences.add(event.sequence);
+  updateLibraryState(event);
   addTimelineEvent(event);
   updateCurrentActivity(event);
   updateTodos(event);
@@ -555,6 +681,14 @@ function resetRun() {
   eventTotal = 0;
   journeyStops = [];
   todos = [];
+  activeLibrary = null;
+  Object.keys(libraryState).forEach((library) => {
+    libraryState[library] = { documents: [], knowledgeBase: "", searchIndex: "" };
+    const shelf = document.querySelector(`[data-inspector="${library}"]`);
+    shelf?.classList.remove("has-documents");
+    shelf?.setAttribute("aria-label", libraryLabels[library]);
+  });
+  if (elements.libraryInspector.open) elements.libraryInspector.close();
   processedSequences.clear();
   visualQueue.length = 0;
   elements.eventCount.textContent = "0 events";
@@ -638,5 +772,21 @@ fetch("/api/config")
   });
 
 renderTodos();
+
+document.querySelectorAll("[data-inspector]").forEach((object) => {
+  const open = () => openLibrary(object.dataset.inspector);
+  object.addEventListener("click", open);
+  object.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      open();
+    }
+  });
+});
+
+elements.inspectorClose.addEventListener("click", () => elements.libraryInspector.close());
+elements.libraryInspector.addEventListener("click", (event) => {
+  if (event.target === elements.libraryInspector) elements.libraryInspector.close();
+});
 
 export { handleHarnessEvent, resetRun };

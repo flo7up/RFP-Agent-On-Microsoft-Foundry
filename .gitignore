@@ -21,6 +21,14 @@ dist/
 # Logs, traces, and local output
 *.log
 .traces/
+.coverage
+htmlcov/
+agent-file-memory/
+.foundry/
+outputs/draft-opportunity-proposal-*.md
+.review-*.png
+.doorbell-*.png
+.playground-*.png
 
 # Editor and operating system
 .vscode/*

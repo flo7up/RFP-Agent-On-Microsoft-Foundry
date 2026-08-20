@@ -73,7 +73,7 @@ def configure_tracing(include_content: bool) -> str:
             resource=Resource.create(
                 {
                     "service.name": "partner-solution-assessment",
-                    "service.namespace": "opportunity-assessment-agent",
+                    "service.namespace": "rfp-agent-on-msfoundry",
                 }
             ),
         )

@@ -257,7 +257,12 @@ failed validation visibly sends the agent back. Timeline messages summarize obse
 results; they do not expose private chain-of-thought. If needed, choose another loopback port with
 `--playground-port <port>`. In idle and after completion, the character returns to its nap nook. Each
 run starts with a visitor ringing the doorbell and handing over the opportunity, which wakes the
-character and plays a short stretch before the first workstation visit.
+character and plays a short stretch before the first workstation visit. A separate Agent Framework
+style-review subagent works in the neighboring studio; the main agent must obtain and publish that
+subagent's revised Markdown before the proposal can be completed.
+
+Once the retrieval shelves are populated, select either shelf to inspect the corresponding synthetic
+Foundry IQ/Azure AI Search documents, including source metadata, reranker scores, and full content.
 
 For the smallest possible one-tool Harness example, run:
 

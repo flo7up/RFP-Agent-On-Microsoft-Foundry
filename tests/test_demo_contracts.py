@@ -5,6 +5,7 @@ import asyncio
 import contextlib
 import importlib.util
 import io
+import json
 import os
 import sys
 import unittest
@@ -545,6 +546,9 @@ class HarnessContractTests(unittest.TestCase):
                         "id": "opportunity-1",
                         "title": "Historical Opportunity",
                         "customer": "Contoso",
+                        "document_type": "historical-project",
+                        "source_path": "DemoData/Past Projects/Historical Opportunity",
+                        "content": "Historical opportunity source content.",
                     },
                 }
             ],
@@ -562,6 +566,9 @@ class HarnessContractTests(unittest.TestCase):
                         "id": "proposal-1",
                         "title": "Historical Proposal",
                         "customer": "Contoso",
+                        "document_type": "proposal",
+                        "source_path": "DemoData/Past Projects/Historical Proposal",
+                        "content": "Historical proposal source content.",
                     },
                 }
             ],
@@ -664,6 +671,16 @@ class HarnessContractTests(unittest.TestCase):
         )
         self.assertEqual(events[1].data["titles"], ["Historical Opportunity"])
         self.assertEqual(events[3].data["titles"], ["Historical Proposal"])
+        self.assertEqual(
+            events[1].data["documents"][0]["content"],
+            "Historical opportunity source content.",
+        )
+        self.assertEqual(
+            events[3].data["documents"][0]["document_type"],
+            "proposal",
+        )
+        json.dumps(events[1].to_dict())
+        json.dumps(events[3].to_dict())
         self.assertEqual(events[-1].data["file_name"], "harness-proposal.md")
         self.assertEqual(events[-1].data["storage_type"], "local")
         self.assertEqual(style_reviewer.run.await_count, 2)

@@ -1,10 +1,32 @@
-# Opportunity Assessment Agent
+# RFP-Agent-On-MSFoundry
 
 A compact Microsoft Agent Framework and Microsoft Foundry demo for turning a customer opportunity into an enterprise-ready solution assessment. The samples show the progression from model-only reasoning to organizational grounding with Foundry IQ, enterprise tools, hosted execution, and observability.
 
 The included healthcare records and opportunity details are synthetic. The project is intended for demonstrations and learning, not as production clinical software.
 
 > Foundry IQ integration uses the `2026-05-01-preview` Azure AI Search API and a beta Azure Search SDK. Review preview compatibility before production use.
+
+## Harness Office
+
+Demo 03 turns Agent Framework activity into an observable pixel-art office. The adaptive work plan,
+retrieval visits, style-review subagent, retries, and publication journey all come from real Harness
+tools and middleware events.
+
+![Harness Office showing a live adaptive work plan and Foundry IQ search](docs/images/harness-office-live.png)
+
+| Idle office | Style-review subagent |
+| --- | --- |
+| ![The main agent sleeping in the Harness Office between runs](docs/images/harness-office-idle.png) | ![The main agent visiting the proposal style reviewer in the neighboring studio](docs/images/style-review-subagent.png) |
+
+![Foundry IQ and Azure AI Search document inspector](docs/images/foundry-iq-library.png)
+
+Start the local experience after completing [Setup](#setup):
+
+```powershell
+python -B kickoffdemos/03_harness.py --playground
+```
+
+Then open `http://127.0.0.1:8090`.
 
 ## What this repository demonstrates
 
@@ -34,7 +56,9 @@ flowchart LR
     O --> D3[Demo 3: Harness orchestration]
     OKB --> D3
     PKB --> D3
-    D3 --> B
+    D3 --> SR[Style-review Agent]
+    SR --> GP[Review-gated publish]
+    GP --> B
 
     T[Approved enterprise tools] --> D4[Demo 4: tool-grounded agent]
     D4 --> R[Local run or Responses host]
@@ -57,16 +81,19 @@ The Foundry IQ path is deliberately separate from model generation:
 | `kickoffdemos/ingest_foundry_iq.py` | Three-document Azure AI Search and Foundry IQ ingestion |
 | `kickoffdemos/02_patterns.py` | Two-stage hybrid agentic retrieval and grounded proposal generation |
 | `kickoffdemos/03_harness_simple.py` | Standalone Harness hello world with one synthetic tool |
-| `kickoffdemos/03_harness.py` | Harness comparison using todos, modes, and bounded proposal tools |
+| `kickoffdemos/03_harness.py` | Adaptive Harness orchestration with todos, bounded tools, and a style-review subagent |
 | `kickoffdemos/hosted_proposal_agent.py` | Foundry Hosted Agent adapter for the complete Demo 02 workflow |
 | `kickoffdemos/04_hosted_tools.py` | Enterprise tool calling and optional Responses host |
 | `kickoffdemos/05_observability.py` | Tracing and a custom coverage score |
 | `tests/test_demo_contracts.py` | Offline regression tests for ingestion, authentication, cleanup, and story contracts |
 | `RUN_DEMOS.md` | Detailed setup, execution, validation, and troubleshooting runbook |
 | `DEMO_GUIDE.md` | Presenter runbook for the consistent five-demo story |
+| `docs/images/` | Release screenshots used by this README |
+| `.github/workflows/ci.yml` | Offline tests, Python compilation, and frontend syntax validation |
 | `.env.example` | Safe configuration template |
 | `requirements.txt` | Base dependencies for local demos |
 | `requirements-hosted.txt` | Optional prerelease dependency for Demo 4 hosted mode |
+| `LICENSE` | MIT license |
 
 ## Prerequisites
 
@@ -103,6 +130,7 @@ Edit `.env` with your resource names. Never commit `.env` or credentials.
 | Variable | Used by | Description |
 | --- | --- | --- |
 | `FOUNDRY_PROJECT_ENDPOINT` | All model demos; Search connection mode | Foundry project endpoint |
+| `AZURE_AI_PROJECT_ENDPOINT` | `azure.yaml`, azd, and all model demos | Foundry project endpoint alias; use the same value as `FOUNDRY_PROJECT_ENDPOINT` |
 | `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Demos 1-5 | Model deployment name |
 | `FOUNDRY_IQ_SEARCH_CONNECTION_NAME` | Ingestion and Demo 2 | Foundry project Search connection; required unless a direct Search endpoint is set |
 | `FOUNDRY_IQ_SEARCH_ENDPOINT` | Ingestion and Demo 2 | Optional direct Search endpoint using `AzureCliCredential` |
@@ -205,7 +233,13 @@ completions, and removals, while the journey trail records every workstation ret
 views summarize observable actions and results without exposing private chain-of-thought. Use
 `--playground-port <port>` when port 8090 is occupied. Between runs the character sleeps in the office
 nap nook. Each run opens with a visitor ringing the doorbell and handing over the opportunity, which
-wakes the character for a quick stretch before it starts work.
+wakes the character for a quick stretch before it starts work. Before publication, the main agent
+walks to the neighboring style studio and invokes a separate `proposal-style-reviewer` Agent Framework
+agent. The publishing tool accepts only the exact revised Markdown returned by that reviewer.
+After retrieval, select either library shelf in Harness Office to browse the synthetic Foundry IQ
+references backed by Azure AI Search. The inspector shows source metadata, reranker scores, index and
+knowledge-base names, and the full retrieved document content; credentials and connection details are
+never sent to the browser.
 
 Launch the browser-based Agent Framework DevUI:
 
@@ -306,7 +340,11 @@ The suite checks ingestion, Search authentication, retrieval cleanup, timestampe
 - Run the dry run and all `--help` commands in a clean environment.
 - Run live ingestion and Demo 2 against a non-production Azure environment.
 - Review the preview SDK/API pins before upgrading.
-- Add a license approved by your organization before publishing. No license is included because license selection is a legal/project-owner decision.
+- Confirm the MIT license is compatible with your organization's release policy.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
 
 ## References
 

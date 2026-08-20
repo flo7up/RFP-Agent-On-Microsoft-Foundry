@@ -179,6 +179,62 @@ def _reference_titles(references: list[dict[str, Any]]) -> list[str]:
     ]
 
 
+def _inspectable_documents(references: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    documents: list[dict[str, Any]] = []
+    for position, reference in enumerate(references):
+        source_data = patterns.first_value(
+            reference,
+            "source_data",
+            "sourceData",
+            default={},
+        ) or {}
+        score = patterns.first_value(
+            reference,
+            "reranker_score",
+            "rerankerScore",
+            default=None,
+        )
+        documents.append(
+            {
+                "reference_id": str(patterns.first_value(reference, "id", default=position)),
+                "document_id": str(patterns.first_value(source_data, "id", default="")),
+                "doc_key": str(
+                    patterns.first_value(reference, "doc_key", "docKey", default="")
+                ),
+                "title": str(patterns.first_value(source_data, "title", default="Untitled")),
+                "customer": str(patterns.first_value(source_data, "customer", default="")),
+                "industry": str(patterns.first_value(source_data, "industry", default="")),
+                "document_type": str(
+                    patterns.first_value(
+                        source_data,
+                        "document_type",
+                        "documentType",
+                        default="",
+                    )
+                ),
+                "opportunity_id": str(
+                    patterns.first_value(
+                        source_data,
+                        "opportunity_id",
+                        "opportunityId",
+                        default="",
+                    )
+                ),
+                "source_path": str(
+                    patterns.first_value(
+                        source_data,
+                        "source_path",
+                        "sourcePath",
+                        default="",
+                    )
+                ),
+                "reranker_score": score if isinstance(score, (int, float)) else None,
+                "content": str(patterns.first_value(source_data, "content", default="")),
+            }
+        )
+    return documents
+
+
 def _published_file(location: str) -> tuple[str, str]:
     parsed = urlparse(location)
     if parsed.scheme in {"http", "https"}:
@@ -385,6 +441,7 @@ def create_harness_tools(
         if progress:
             progress("Tool: finding similar historical opportunities.")
         if event:
+            _, knowledge_base = patterns.resource_names()
             event(
                 HarnessEvent(
                     kind="research.opportunities.started",
@@ -421,7 +478,16 @@ def create_harness_tools(
                     title="Similar opportunities found",
                     message=f"I found {len(titles)} relevant historical opportunities.",
                     status="completed",
-                    data={"count": len(titles), "titles": titles},
+                    data={
+                        "count": len(titles),
+                        "titles": titles,
+                        "documents": _inspectable_documents(evidence.references),
+                        "knowledge_base": knowledge_base,
+                        "search_index": os.getenv(
+                            "FOUNDRY_IQ_OPPORTUNITY_INDEX_NAME",
+                            "si-healthcare-opportunity-history",
+                        ),
+                    },
                 )
             )
         return (
@@ -449,6 +515,7 @@ def create_harness_tools(
         if progress:
             progress("Tool: retrieving proposals linked to the matched opportunities.")
         if event:
+            _, knowledge_base = patterns.proposal_resource_names()
             event(
                 HarnessEvent(
                     kind="research.proposals.started",
@@ -485,7 +552,18 @@ def create_harness_tools(
                     title="Proposal evidence ready",
                     message=f"I retrieved {len(titles)} linked proposals for grounding.",
                     status="completed",
-                    data={"count": len(titles), "titles": titles},
+                    data={
+                        "count": len(titles),
+                        "titles": titles,
+                        "documents": _inspectable_documents(
+                            state.proposal_evidence.proposal_references
+                        ),
+                        "knowledge_base": knowledge_base,
+                        "search_index": os.getenv(
+                            "FOUNDRY_IQ_PROPOSAL_INDEX_NAME",
+                            "si-healthcare-opportunity-proposals",
+                        ),
+                    },
                 )
             )
             event(

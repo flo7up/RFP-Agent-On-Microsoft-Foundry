@@ -244,7 +244,7 @@ def create_assessment_agent(credential: AzureCliCredential) -> Agent:
     endpoint = required_setting("FOUNDRY_PROJECT_ENDPOINT", "AZURE_AI_PROJECT_ENDPOINT", "project_endpoint")
     model = required_setting("AZURE_AI_MODEL_DEPLOYMENT_NAME", "FOUNDRY_MODEL", "deployment_name")
     return Agent(
-        name="opportunity-assessment-agent",
+        name="rfp-agent-on-msfoundry",
         description="Uses organizational project history to accelerate opportunity and offer creation.",
         instructions=(
             "You are an experienced Microsoft SI solution architect. Clearly distinguish the new "

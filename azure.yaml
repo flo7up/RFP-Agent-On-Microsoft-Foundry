@@ -1,10 +1,10 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
 
-name: opportunity-assessment-agent
+name: rfp-agent-on-msfoundry
 services:
-    agent-ai-serviceshf3u-project:
+    ai-project:
         host: azure.ai.project
-        endpoint: https://agent-ai-serviceshf3u.services.ai.azure.com/api/projects/agent-ai-serviceshf3u-project
+        endpoint: ${AZURE_AI_PROJECT_ENDPOINT}
     opportunity-proposal-agent:
         project: .
         host: azure.ai.agent
@@ -18,7 +18,7 @@ services:
                 - Hybrid Retrieval
                 - Responses Protocol
         uses:
-            - agent-ai-serviceshf3u-project
+            - ai-project
         codeConfiguration:
             dependencyResolution: remote_build
             entryPoint: kickoffdemos/hosted_proposal_agent.py

@@ -1,4 +1,4 @@
-# Presenter Guide: Opportunity Assessment Agent
+# Presenter Guide: RFP Agent on Microsoft Foundry
 
 This runbook presents five numbered demos as one story for Microsoft partners and system integrators. The complete presentation takes about 22 minutes.
 
@@ -242,6 +242,8 @@ terminal-only comparison remains available with `python -B kickoffdemos\03_harne
 - The journey preserves returns to earlier workstations for refined searches and validation retries.
 - Every run opens at the door: a visitor rings the doorbell and hands over the opportunity brief.
 - Idle is visible too: the character sleeps between runs, then wakes and stretches on the first event.
+- A separate style-review Agent works next door; publication is blocked until its revised draft returns.
+- Select either populated shelf to inspect the exact synthetic Foundry IQ/Azure AI Search source documents.
 - Speech bubbles summarize observable actions and results, not private chain-of-thought.
 - Retrieval and publication remain bounded by application tools.
 - `default_options={"store": False}` remains enforced.

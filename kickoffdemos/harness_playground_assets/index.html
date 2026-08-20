@@ -224,7 +224,8 @@
               <rect x="172" y="69" width="7" height="2" fill="var(--cp-text-muted)"/>
             </g>
 
-            <g class="station opportunity-shelf" data-station="opportunity_shelf">
+            <g class="station inspectable-object opportunity-shelf" data-station="opportunity_shelf" data-inspector="opportunity_shelf" role="button" tabindex="0" aria-label="Inspect historical opportunity documents">
+              <title>Inspect historical opportunity documents</title>
               <rect class="station-zone" x="284" y="12" width="84" height="54" fill="var(--cp-accent-soft)" stroke="var(--cp-accent)" stroke-width="1" stroke-dasharray="3 3"/>
               <rect x="294" y="20" width="72" height="46" fill="var(--cp-text)" opacity=".16"/>
               <rect class="ol" x="290" y="16" width="72" height="46" fill="var(--cp-border-strong)"/>
@@ -247,7 +248,8 @@
               <rect x="359" y="18" width="3" height="44" fill="var(--cp-text)" opacity=".28"/>
             </g>
 
-            <g class="station proposal-shelf" data-station="proposal_shelf">
+            <g class="station inspectable-object proposal-shelf" data-station="proposal_shelf" data-inspector="proposal_shelf" role="button" tabindex="0" aria-label="Inspect linked proposal documents">
+              <title>Inspect linked proposal documents</title>
               <rect class="station-zone" x="284" y="76" width="84" height="58" fill="var(--cp-accent-soft)" stroke="var(--cp-accent)" stroke-width="1" stroke-dasharray="3 3"/>
               <rect x="294" y="85" width="72" height="48" fill="var(--cp-text)" opacity=".16"/>
               <rect class="ol" x="290" y="81" width="72" height="48" fill="var(--cp-border-strong)"/>
@@ -553,6 +555,34 @@
       </section>
     </aside>
   </main>
+
+  <dialog class="library-inspector" id="libraryInspector" aria-labelledby="inspectorTitle">
+    <div class="inspector-shell">
+      <header class="inspector-header">
+        <div>
+          <small id="inspectorSource">Foundry IQ · Azure AI Search</small>
+          <h2 id="inspectorTitle">Retrieved documents</h2>
+          <p id="inspectorResources"></p>
+        </div>
+        <button class="inspector-close" id="inspectorClose" type="button" aria-label="Close document inspector" title="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        </button>
+      </header>
+      <div class="inspector-layout">
+        <nav class="document-list" id="documentList" aria-label="Retrieved documents"></nav>
+        <article class="document-detail" id="documentDetail">
+          <div class="document-empty" id="documentEmpty">No documents retrieved in this run.</div>
+          <div id="documentView" hidden>
+            <div class="document-kicker" id="documentKicker"></div>
+            <h3 id="documentTitle"></h3>
+            <div class="document-chips" id="documentChips"></div>
+            <dl class="document-metadata" id="documentMetadata"></dl>
+            <pre class="document-content" id="documentContent"></pre>
+          </div>
+        </article>
+      </div>
+    </div>
+  </dialog>
 
   <script type="module" src="/assets/playground.js"></script>
 </body>
